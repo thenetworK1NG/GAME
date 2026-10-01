@@ -1,0 +1,11 @@
+# Dependencies: the game loads three.js from a CDN via the importmap in
+# index.html, so node_modules is never needed to run or deploy it.
+node_modules/
+
+# Scratch diagnostics from the FBX retargeting work. Recreated ad hoc.
+tools/probe*.mjs
+
+# Local editor / OS noise
+.DS_Store
+Thumbs.db
+*.log
