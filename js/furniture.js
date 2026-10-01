@@ -888,6 +888,7 @@ export class FurnitureSystem {
 
     this.interactables.splice(this.interactables.indexOf(inst), 1);
     this.outline.group.visible = true;
+    if (this.onEvent) this.onEvent('pickup', inst);
   }
 
   rotate() {
@@ -933,6 +934,7 @@ export class FurnitureSystem {
     this.carried = null;
     this.outline.group.visible = false;
     this.interactables.push(inst);
+    if (this.onEvent) this.onEvent('place', inst);
     return true;
   }
 
@@ -970,6 +972,7 @@ export class FurnitureSystem {
     this.carried = null;
     this.outline.group.visible = false;
     this.interactables.push(inst);
+    if (this.onEvent) this.onEvent('place', inst);
     return true;
   }
 
@@ -1068,7 +1071,11 @@ export class FurnitureSystem {
     if (this.refusing > 0) {
       this.refusing -= dt;
       if (this.refusing <= 0) {
-        this.refusing = 0;
+this.refusing = 0;
+    // Optional callback, set by the game shell: onEvent('pickup'|'place', inst).
+    // Lets sound react to successful interactions without this module needing to
+    // know anything about audio. Left null here so the tests can run without it.
+    this.onEvent = null;
         this.outline.group.visible = true;
 } else if (carried) {
         // Leave the panel where it is; just repaint it amber and blink. Redoing

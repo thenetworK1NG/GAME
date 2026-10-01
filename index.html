@@ -3,6 +3,13 @@
 <head>
 <meta charset="utf-8">
 <title>Plushie Walk</title>
+<link rel="icon" href="favicon.ico" sizes="any">
+<link rel="manifest" href="manifest.webmanifest">
+
+<!-- iOS ignores the manifest for the home-screen icon and for standalone
+     display, so both need their own tags. -->
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
+<meta name="apple-mobile-web-app-title" content="Plushie">
 
 <!-- Lock the viewport for phones: no zoom, no rubber-band scroll, and
      viewport-fit=cover so the canvas can reach under the notch. -->
@@ -104,6 +111,146 @@
        here rather than replaced. Do not set `transform` outright. */
     will-change: transform;
     pointer-events: none;
+  }
+
+  /* ---------- Menu ---------- */
+
+  /* Top-right so it cannot collide with the stick (bottom-centre) or the action
+     and rotate buttons (bottom-right). */
+  #menu-button {
+    position: fixed;
+    top: max(10px, calc(env(safe-area-inset-top) + 10px));
+    right: max(10px, calc(env(safe-area-inset-right) + 10px));
+    width: 46px;
+    height: 46px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 12px;
+    border: 2px solid rgba(255, 255, 255, 0.32);
+    background: rgba(47, 55, 66, 0.55);
+    backdrop-filter: blur(6px);
+    -webkit-backdrop-filter: blur(6px);
+    color: #fff;
+    z-index: 15;
+    cursor: pointer;
+    touch-action: manipulation;
+    -webkit-tap-highlight-color: transparent;
+    user-select: none;
+    transition: background 140ms ease, transform 140ms ease;
+  }
+
+  #menu-button:active { transform: scale(0.94); }
+  #menu-button svg { width: 24px; height: 24px; }
+
+  #menu-backdrop {
+    position: fixed;
+    inset: 0;
+    display: none;
+    background: rgba(0, 0, 0, 0.42);
+    z-index: 16;
+  }
+
+  #menu-backdrop.open { display: block; }
+
+  #menu {
+    position: fixed;
+    top: max(10px, calc(env(safe-area-inset-top) + 10px));
+    right: max(10px, calc(env(safe-area-inset-right) + 10px));
+    width: min(300px, calc(100vw - 24px));
+    /* Anchored to the button's left edge and nudged up by its own half-height,
+       so the sheet appears to grow out from under the button. */
+    transform-origin: top right;
+    transform: scale(0.9);
+    opacity: 0;
+    pointer-events: none;
+    /* 180ms matches the button's own transition. */
+    transition: transform 180ms cubic-bezier(0.2, 0.8, 0.3, 1), opacity 140ms ease;
+    background: #2f3742;
+    border: 1px solid rgba(255, 255, 255, 0.14);
+    border-radius: 14px;
+    box-shadow: 0 18px 44px rgba(0, 0, 0, 0.5);
+    color: var(--ui);
+    z-index: 17;
+    overflow: hidden;
+  }
+
+  /* Below the button's height, so the sheet clears it instead of covering it. */
+  #menu.open {
+    transform: scale(1);
+    opacity: 1;
+    pointer-events: auto;
+    margin-top: 54px;
+  }
+
+  #menu header {
+    padding: 14px 16px 10px;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+  }
+
+  #menu header strong {
+    display: block;
+    font-size: 15px;
+    letter-spacing: 0.2px;
+  }
+
+  #menu header span {
+    display: block;
+    margin-top: 2px;
+    font-size: 12px;
+    color: rgba(255, 255, 255, 0.55);
+  }
+
+  #menu ul {
+    list-style: none;
+    margin: 0;
+    padding: 6px;
+  }
+
+  #menu .row { padding: 2px; }
+
+  #menu .row[hidden] { display: none; }
+
+  #menu button {
+    display: block;
+    width: 100%;
+    padding: 12px 14px;
+    border: none;
+    border-radius: 10px;
+    background: rgba(255, 255, 255, 0.08);
+    color: var(--ui);
+    font: inherit;
+    font-size: 14px;
+    text-align: left;
+    cursor: pointer;
+    touch-action: manipulation;
+    -webkit-tap-highlight-color: transparent;
+    transition: background 140ms ease;
+  }
+
+  #menu button:active:not(:disabled) { background: rgba(255, 255, 255, 0.16); }
+
+  #menu button:disabled {
+    opacity: 0.75;
+    cursor: default;
+  }
+
+  #menu button[hidden] { display: none; }
+
+  #menu .note {
+    padding: 0 14px 10px;
+    font-size: 11.5px;
+    line-height: 1.45;
+    color: rgba(255, 255, 255, 0.5);
+  }
+
+  #menu .note[hidden] { display: none; }
+
+  #menu .meta {
+    padding: 10px 16px 12px;
+    border-top: 1px solid rgba(255, 255, 255, 0.1);
+    font-size: 11px;
+    color: rgba(255, 255, 255, 0.42);
   }
 
   /* ---------- Action button ---------- */
@@ -372,6 +519,30 @@
     <div id="knob"></div>
   </div>
 
+  <button id="menu-button" type="button" aria-label="Open menu"
+          aria-haspopup="true" aria-expanded="false" aria-controls="menu">
+    <svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor"
+         stroke-width="2.2" stroke-linecap="round">
+      <path d="M3.5 7h17M3.5 12h17M3.5 17h17" />
+    </svg>
+  </button>
+
+  <div id="menu-backdrop"></div>
+
+  <nav id="menu" aria-label="Menu">
+    <header>
+      <strong>Plushie Walk</strong>
+      <span>Rearrange the house</span>
+    </header>
+    <ul>
+      <li class="row" id="install-row" hidden>
+        <button id="install" type="button">Install</button>
+        <div class="note" id="install-note" hidden></div>
+      </li>
+    </ul>
+    <div class="meta">Move with the stick. Drag the view to rotate it.</div>
+  </nav>
+
   <button id="action" type="button" aria-label="Interact" disabled></button>
 
   <button id="rotate" type="button" aria-label="Rotate carried object 90 degrees">
@@ -397,6 +568,7 @@
     <div>Turn your phone upright</div>
   </div>
 
+  <script type="module" src="js/menu.js"></script>
   <script type="module" src="js/game.js"></script>
 </body>
 </html>

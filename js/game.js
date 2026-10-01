@@ -3,6 +3,7 @@ import { Player } from './player.js';
 import { Joystick, CameraLook } from './joystick.js';
 import { buildHouse, resolveAgainstRects, PLAYER_RADIUS } from './house.js';
 import { FurnitureSystem, registerDefaults } from './furniture.js';
+import { GameSounds } from './sound.js';
 
 const CAMERA_PITCH = THREE.MathUtils.degToRad(52);
 const CAMERA_DISTANCE = 11;
@@ -58,7 +59,9 @@ async function main() {
   // visible gain at this camera distance.
   renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
   renderer.shadowMap.enabled = true;
-  renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+  // PCFSoftShadowMap was removed in 0.186 and silently falls back to this one with
+// a console warning, so name it directly.
+renderer.shadowMap.type = THREE.PCFShadowMap;
   renderer.outputColorSpace = THREE.SRGBColorSpace;
   stage.appendChild(renderer.domElement);
 
@@ -114,6 +117,12 @@ async function main() {
     headers: house.headers,
   });
   for (const entry of START_LAYOUT) furniture.place(entry.id, entry.x, entry.z, entry.rotation);
+
+  // ---------- Sound ----------
+  // Wired through the furniture event hook, so the audio module stays unaware
+  // of the game and this stays unaware of how a cue is voiced.
+  const sounds = new GameSounds(camera, 'sound/pickup_place.mp3');
+  furniture.onEvent = (cue) => sounds.play(cue);
 
   // The print starts on the east wall of the living room, a little past the
   // sofa. Placed via the same wall maths the carry path uses so it lands flush
@@ -190,7 +199,11 @@ async function main() {
 
   // ---------- Loop ----------
 
-  const clock = new THREE.Clock();
+  // Timer, not Clock: Clock is deprecated as of 0.186. Timer needs an explicit
+  // update(timestamp) each frame, and connect() opts into the Page Visibility
+  // API so a backgrounded tab does not resume with one enormous delta.
+  const timer = new THREE.Timer();
+  timer.connect(document);
   const stickVector = new THREE.Vector2();
   const cameraFocus = new THREE.Vector3();
   const cameraDesired = new THREE.Vector3();
@@ -211,7 +224,9 @@ async function main() {
   function tick() {
     requestAnimationFrame(tick);
 
-    const dt = Math.min(clock.getDelta(), 0.05);
+    timer.update();
+    // Clamped so a stalled frame cannot teleport the plushie through a wall.
+    const dt = Math.min(timer.getDelta(), 0.05);
 
     stickVector.set(joystick.vector.x, joystick.vector.y);
 
