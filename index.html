@@ -8,18 +8,20 @@
      viewport-fit=cover so the canvas can reach under the notch. -->
 <meta name="viewport"
       content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
-<meta name="theme-color" content="#1a2b1f">
+<meta name="theme-color" content="#2f3742">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-<meta name="description" content="Walk your plushie around a flat field.">
+<meta name="description" content="Walk your plushie around a three-room house and rearrange the furniture.">
 
 <style>
   :root {
     --safe-bottom: env(safe-area-inset-bottom, 0px);
     --safe-left:   env(safe-area-inset-left, 0px);
+    --safe-right:  env(safe-area-inset-right, 0px);
     --stick-size:  132px;
     --knob-size:   58px;
+    --action-size: 88px;
     --ui: rgba(255, 255, 255, 0.9);
   }
 
@@ -29,7 +31,7 @@
     width: 100%;
     height: 100%;
     overflow: hidden;
-    background: #1a2b1f;
+    background: #2f3742;
     /* Stop iOS from interpreting drags as scroll or pinch-zoom. */
     touch-action: none;
     overscroll-behavior: none;
@@ -54,10 +56,14 @@
 
   #joystick {
     position: fixed;
-    left: calc(var(--safe-left) + 22px);
-    bottom: calc(var(--safe-bottom) + 26px);
-    width: var(--stick-size);
-    height: var(--stick-size);
+    /* Centred horizontally, so both thumbs rest on it in portrait. */
+    left: 50%;
+    transform: translateX(-50%);
+    bottom: max(12px, calc(var(--safe-bottom) + 14px));
+    /* Shrink on narrow viewports so the stick and the action button always
+       have room side by side. */
+    width: min(var(--stick-size), 36vw);
+    height: min(var(--stick-size), 36vw);
     border-radius: 50%;
     background: rgba(255, 255, 255, 0.12);
     border: 2px solid rgba(255, 255, 255, 0.28);
@@ -85,15 +91,161 @@
     position: absolute;
     left: 50%;
     top: 50%;
-    width: var(--knob-size);
-    height: var(--knob-size);
-    margin-left: calc(var(--knob-size) / -2);
-    margin-top: calc(var(--knob-size) / -2);
+    /* Scales with the housing so it keeps a usable amount of travel on small
+       screens, instead of eating most of a shrunk stick. */
+    width: min(var(--knob-size), 44%);
+    height: min(var(--knob-size), 44%);
+    margin-left: calc(min(var(--knob-size), 44%) / -2);
+    margin-top: calc(min(var(--knob-size), 44%) / -2);
     border-radius: 50%;
     background: rgba(255, 255, 255, 0.85);
     box-shadow: 0 3px 12px rgba(0, 0, 0, 0.35);
+    /* The JS writes translate(x, y) on this, so the knob offsets are composed
+       here rather than replaced. Do not set `transform` outright. */
     will-change: transform;
     pointer-events: none;
+  }
+
+  /* ---------- Action button ---------- */
+
+  /* Sits to the right of the bottom-centre stick. Inert (but still present)
+     until an interactable is in range, so the layout does not jump.
+
+     The insets are max()-clamped against a small floor so the button can never
+     be pushed off-screen or under the notch on a device with a large safe
+     area, which is what previously cut it off. */
+  #action {
+    position: fixed;
+    right: max(12px, calc(var(--safe-right) + 12px));
+    bottom: max(12px, calc(var(--safe-bottom) + 14px));
+    /* 26vw with a 36vw stick leaves a clear gap at every width down to 260px,
+       verified from 260 to 480. */
+    width: min(var(--action-size), 26vw);
+    height: min(var(--action-size), 26vw);
+    border-radius: 50%;
+    border: 2px solid rgba(255, 255, 255, 0.4);
+    background: rgba(255, 255, 255, 0.16);
+    backdrop-filter: blur(6px);
+    -webkit-backdrop-filter: blur(6px);
+    color: #fff;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 11;
+    touch-action: none;
+    cursor: pointer;
+    transition: opacity 140ms ease, transform 140ms ease, background 140ms ease;
+    -webkit-tap-highlight-color: transparent;
+    user-select: none;
+  }
+
+  /* A speech-bubble glyph, drawn with borders so it needs no icon font. */
+  #action::before {
+    content: "";
+    position: relative;
+    width: 34px;
+    height: 26px;
+    border: 3px solid currentColor;
+    border-radius: 9px;
+  }
+
+  #action::after {
+    content: "";
+    position: absolute;
+    left: 50%;
+    bottom: 22px;
+    width: 9px;
+    height: 9px;
+    border-right: 3px solid currentColor;
+    border-bottom: 3px solid currentColor;
+    background: inherit;
+    transform: translateX(-70%) rotate(45deg);
+  }
+
+  /* Nothing in range: visible but clearly disabled. */
+  #action[disabled] {
+    opacity: 0.28;
+    cursor: default;
+  }
+
+  /* In range and pressed. */
+  #action:not([disabled]):active {
+    transform: scale(0.92);
+    background: rgba(255, 255, 255, 0.34);
+  }
+
+  /* Carrying: the bubble glyph becomes a place-down arrow, so the button says
+     what the next press will do instead of relying on the prompt alone. */
+  #action.carrying::before {
+    width: 26px;
+    height: 26px;
+    border: none;
+    border-right: 4px solid currentColor;
+    border-bottom: 4px solid currentColor;
+    border-radius: 2px;
+    transform: rotate(45deg) translate(-3px, -3px);
+  }
+
+  #action.carrying::after {
+    content: "";
+    position: absolute;
+    left: 50%;
+    bottom: 20px;
+    width: 28px;
+    height: 4px;
+    border: none;
+    border-radius: 2px;
+    background: currentColor;
+    transform: translateX(-50%);
+  }
+
+  /* ---------- Rotate button ---------- */
+
+  /* Only exists while something is being carried. Stacks directly above the
+     action button on the same right inset, so the bottom row never shifts and
+     nothing new appears on screen when the player is only walking around. */
+  #rotate {
+    position: fixed;
+    right: max(12px, calc(var(--safe-right) + 12px));
+    bottom: max(12px, calc(var(--safe-bottom) + 14px));
+    /* Ride on top of the action button, whichever of the two is smaller. */
+    margin-bottom: calc(min(var(--action-size), 26vw) + 14px);
+    width: 60px;
+    height: 60px;
+    border-radius: 50%;
+    border: 2px solid rgba(255, 255, 255, 0.4);
+    background: rgba(255, 255, 255, 0.16);
+    backdrop-filter: blur(6px);
+    -webkit-backdrop-filter: blur(6px);
+    color: #fff;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 11;
+    touch-action: none;
+    cursor: pointer;
+    opacity: 0;
+    transform: scale(0.85);
+    pointer-events: none;
+    transition: opacity 140ms ease, transform 140ms ease, background 140ms ease;
+    -webkit-tap-highlight-color: transparent;
+    user-select: none;
+  }
+
+  #rotate svg {
+    width: 30px;
+    height: 30px;
+  }
+
+  #rotate.visible {
+    opacity: 1;
+    transform: scale(1);
+    pointer-events: auto;
+  }
+
+  #rotate.visible:active {
+    transform: scale(0.92);
+    background: rgba(255, 255, 255, 0.34);
   }
 
   /* ---------- Overlays ---------- */
@@ -106,7 +258,7 @@
     align-items: center;
     justify-content: center;
     gap: 14px;
-    background: #1a2b1f;
+    background: #2f3742;
     color: var(--ui);
     z-index: 20;
     text-align: center;
@@ -126,7 +278,7 @@
     width: 40%;
     height: 100%;
     border-radius: 2px;
-    background: #9ad06f;
+    background: #e0b070;
     animation: slide 1.1s ease-in-out infinite;
   }
 
@@ -146,7 +298,7 @@
     justify-content: center;
     gap: 10px;
     padding: 28px;
-    background: #1a2b1f;
+    background: #2f3742;
     color: #ffb4a2;
     z-index: 30;
     text-align: center;
@@ -165,8 +317,11 @@
     text-align: left;
   }
 
-  /* Nudge for orientation when the phone is held sideways. */
-  #rotate {
+  /* Nudge for orientation when the phone is held sideways.
+     Note the id: this must NOT be "rotate", which belongs to the carry
+     rotation button. Sharing it let this rule's display:none and inset:0
+     apply to the button as well and the button never rendered at all. */
+  #turn-hint {
     position: fixed;
     inset: 0;
     display: none;
@@ -174,14 +329,14 @@
     justify-content: center;
     gap: 12px;
     flex-direction: column;
-    background: #1a2b1f;
+    background: #2f3742;
     color: var(--ui);
     z-index: 40;
     text-align: center;
     padding: 24px;
   }
 
-  #rotate .icon {
+  #turn-hint .icon {
     width: 46px;
     height: 74px;
     border: 3px solid var(--ui);
@@ -196,7 +351,7 @@
 
   /* Portrait phones only: show the hint, but keep it cheap. */
   @media (orientation: landscape) and (max-height: 520px) {
-    #rotate { display: flex; }
+    #turn-hint { display: flex; }
   }
 </style>
 
@@ -217,6 +372,16 @@
     <div id="knob"></div>
   </div>
 
+  <button id="action" type="button" aria-label="Interact" disabled></button>
+
+  <button id="rotate" type="button" aria-label="Rotate carried object 90 degrees">
+    <svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor"
+         stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M20 12a8 8 0 1 1-2.34-5.66" />
+      <path d="M18.6 2.6v4.2h-4.2" />
+    </svg>
+  </button>
+
   <div id="loading">
     <div>Waking up the plushie&hellip;</div>
     <div class="bar"><span></span></div>
@@ -227,7 +392,7 @@
     <code id="error-text"></code>
   </div>
 
-  <div id="rotate">
+  <div id="turn-hint">
     <div class="icon"></div>
     <div>Turn your phone upright</div>
   </div>

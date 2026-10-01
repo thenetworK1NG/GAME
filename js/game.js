@@ -1,10 +1,8 @@
 import * as THREE from 'three';
 import { Player } from './player.js';
 import { Joystick, CameraLook } from './joystick.js';
-
-const MAP_SIZE = 60;          // playable field is MAP_SIZE x MAP_SIZE
-const BOUNDARY_MARGIN = 2;    // keeps the plushie a little inside the edge
-const PLAYER_RADIUS = 0.55;
+import { buildHouse, resolveAgainstRects, PLAYER_RADIUS } from './house.js';
+import { FurnitureSystem, registerDefaults } from './furniture.js';
 
 const CAMERA_PITCH = THREE.MathUtils.degToRad(52);
 const CAMERA_DISTANCE = 11;
@@ -16,19 +14,24 @@ const CAMERA_FOLLOW_RATE = 5;
 const ZOOM_MIN = 4.5;
 const ZOOM_MAX = 17;
 
-/** Mulberry32: small, fast, seedable PRNG so the map is identical each load. */
-function makeRandom(seed) {
-  let a = seed >>> 0;
-  return function random() {
-    a = (a + 0x6d2b79f5) >>> 0;
-    let t = Math.imul(a ^ (a >>> 15), 1 | a);
-    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
-    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
-  };
-}
+// Background, shared with index.html so the loading overlay does not flash a
+// different colour before the canvas exists.
+const BACKDROP = 0x2f3742;
 
-const clampToMap = (v) =>
-  THREE.MathUtils.clamp(v, -MAP_SIZE / 2 + BOUNDARY_MARGIN, MAP_SIZE / 2 - BOUNDARY_MARGIN);
+// Where the four pieces and the sign start out. All on grid cells, all clear
+// of the doorway gaps so nothing spawns blocking a door.
+const START_LAYOUT = [
+  // Living room, back against the east exterior wall.
+  { id: 'sofa', x: 10.0, z: -6.0, rotation: -Math.PI / 2 },
+  { id: 'table', x: 6.5, z: -5.0, rotation: 0 },
+  // Bedroom, headboard to the west exterior wall.
+  { id: 'bed', x: -10.0, z: -6.0, rotation: Math.PI / 2 },
+  // Kitchen, free-standing.
+  { id: 'chair', x: 9.0, z: 5.0, rotation: 0 },
+  { id: 'sign', x: 3.0, z: -2.0, rotation: 0 },
+];
+
+const SPAWN = { x: 6.0, z: -1.0 };
 
 function fail(err) {
   const panel = document.getElementById('error');
@@ -62,24 +65,34 @@ async function main() {
   // ---------- Scene and camera ----------
 
   const scene = new THREE.Scene();
-  scene.background = new THREE.Color(0x9ed2f0);
-  scene.fog = new THREE.Fog(0x9ed2f0, 45, 105);
+  scene.background = new THREE.Color(BACKDROP);
+  // No fog: it was tuned for an open field reaching 60 units, and inside a 24
+  // unit house the near plane is never reached, so it did nothing but tint the
+  // far walls at the zoom limit.
 
-  const camera = new THREE.PerspectiveCamera(58, 1, 0.1, 300);
+  // near/far are pulled in as tight as the scene allows: at the old 0.1/300 the
+  // 3000:1 ratio thinned out depth precision badly enough for near-coplanar
+  // floor surfaces to shimmer. Nothing comes closer than roughly 1.5 units, and
+  // the far corner of the house from a fully zoomed-out camera is about 35.
+  const camera = new THREE.PerspectiveCamera(58, 1, 0.3, 100);
   camera.position.set(0, CAMERA_HEIGHT, CAMERA_DISTANCE);
 
   // ---------- Lighting ----------
 
-  const hemi = new THREE.HemisphereLight(0xffffff, 0x6a8f5a, 0.75);
+  // Interiors need more ambient fill than a field does, or the wall the player
+  // is standing next to goes black as soon as the sun is behind it.
+  const hemi = new THREE.HemisphereLight(0xfff6ea, 0x6a6a62, 1.05);
   scene.add(hemi);
 
-  const sun = new THREE.DirectionalLight(0xfff2d8, 2.1);
+  // The directional light stays the "window light". Tightened around the house
+  // so the 2048 shadow map spends its resolution on rooms rather than grass.
+  const sun = new THREE.DirectionalLight(0xfff2d8, 2.0);
   sun.position.set(18, 28, 12);
   sun.castShadow = true;
   sun.shadow.mapSize.set(2048, 2048);
   sun.shadow.camera.near = 1;
   sun.shadow.camera.far = 90;
-  const shadowSpan = MAP_SIZE * 0.62;
+  const shadowSpan = 15;
   sun.shadow.camera.left = -shadowSpan;
   sun.shadow.camera.right = shadowSpan;
   sun.shadow.camera.top = shadowSpan;
@@ -89,137 +102,23 @@ async function main() {
   scene.add(sun);
   scene.add(sun.target);
 
-  // ---------- Ground and path ----------
+  // ---------- House ----------
 
-  const groundGeo = new THREE.PlaneGeometry(MAP_SIZE, MAP_SIZE, 1, 1);
-  const groundMat = new THREE.MeshStandardMaterial({
-    color: 0x6aa64f,
-    roughness: 1,
-    metalness: 0,
+  const house = buildHouse(scene);
+
+  registerDefaults();
+  const furniture = new FurnitureSystem({
+    scene,
+    walls: house.walls,
+    bounds: house.bounds,
+    headers: house.headers,
   });
-  const ground = new THREE.Mesh(groundGeo, groundMat);
-  ground.rotation.x = -Math.PI / 2;
-  ground.receiveShadow = true;
-  scene.add(ground);
+  for (const entry of START_LAYOUT) furniture.place(entry.id, entry.x, entry.z, entry.rotation);
 
-  // Dirt path tiles laid along two crossing lanes, plus a border of edge
-  // tiles so the walkable area reads as a field rather than an infinite plane.
-  const pathMat = new THREE.MeshStandardMaterial({
-    color: 0xb99a6b,
-    roughness: 1,
-    metalness: 0,
-  });
-  const tileSize = 3;
-  const pathGeo = new THREE.PlaneGeometry(tileSize, tileSize);
-  const pathTiles = [];
-
-  for (let x = -MAP_SIZE / 2 + tileSize / 2; x < MAP_SIZE / 2; x += tileSize) {
-    for (let z = -MAP_SIZE / 2 + tileSize / 2; z < MAP_SIZE / 2; z += tileSize) {
-      // A horizontal lane, a vertical lane, and a stitched border.
-      const onHorizontal = Math.abs(z) < tileSize * 0.75;
-      const onVertical = Math.abs(x) < tileSize * 0.75;
-      const onBorder =
-        Math.abs(x) > MAP_SIZE / 2 - tileSize * 1.25 ||
-        Math.abs(z) > MAP_SIZE / 2 - tileSize * 1.25;
-      if (onHorizontal || onVertical || onBorder) {
-        pathTiles.push([x, z]);
-      }
-    }
-  }
-
-  const paths = new THREE.InstancedMesh(pathGeo, pathMat, pathTiles.length);
-  paths.receiveShadow = true;
-  const matrix = new THREE.Matrix4();
-  const quaternion = new THREE.Quaternion().setFromEuler(
-    new THREE.Euler(-Math.PI / 2, 0, 0)
-  );
-  const one = new THREE.Vector3(1, 1, 1);
-  pathTiles.forEach(([x, z], i) => {
-    matrix.compose(new THREE.Vector3(x, 0.01, z), quaternion, one);
-    paths.setMatrixAt(i, matrix);
-  });
-  paths.instanceMatrix.needsUpdate = true;
-  scene.add(paths);
-
-  // ---------- Scenery ----------
-
-  const random = makeRandom(20260901);
-
-  const trunkGeo = new THREE.CylinderGeometry(0.28, 0.38, 1.5, 7);
-  const leafGeo = new THREE.ConeGeometry(1.5, 3.4, 8);
-  const trunkMat = new THREE.MeshStandardMaterial({ color: 0x6b4a2f, roughness: 1 });
-  const leafMat = new THREE.MeshStandardMaterial({ color: 0x3f7a35, roughness: 0.95 });
-
-  function makeTree(scale) {
-    const tree = new THREE.Group();
-    const trunk = new THREE.Mesh(trunkGeo, trunkMat);
-    trunk.position.y = 0.75;
-    trunk.castShadow = true;
-    trunk.receiveShadow = true;
-    const leaves = new THREE.Mesh(leafGeo, leafMat);
-    leaves.position.y = 1.5 + 1.7;
-    leaves.castShadow = true;
-    tree.add(trunk, leaves);
-    tree.scale.setScalar(scale);
-    return tree;
-  }
-
-  function makeRock(scale) {
-    const rock = new THREE.Mesh(
-      new THREE.DodecahedronGeometry(0.55, 0),
-      new THREE.MeshStandardMaterial({ color: 0x8d8b86, roughness: 0.95, flatShading: true })
-    );
-    rock.position.y = 0.34 * scale;
-    rock.rotation.set(random() * 3, random() * 3, random() * 3);
-    rock.scale.set(scale, scale * 0.8, scale);
-    rock.castShadow = true;
-    rock.receiveShadow = true;
-    return rock;
-  }
-
-  function makeBush(scale) {
-    const bush = new THREE.Mesh(
-      new THREE.IcosahedronGeometry(0.72, 0),
-      new THREE.MeshStandardMaterial({ color: 0x4f9440, roughness: 1, flatShading: true })
-    );
-    bush.position.y = 0.5 * scale;
-    bush.scale.set(scale, scale * 0.8, scale);
-    bush.rotation.y = random() * Math.PI;
-    bush.castShadow = true;
-    bush.receiveShadow = true;
-    return bush;
-  }
-
-  // Keep props off the crossing lanes and away from the spawn point.
-  function onPath(x, z) {
-    return Math.abs(x) < 4.5 || Math.abs(z) < 4.5;
-  }
-
-  const scenery = new THREE.Group();
-  scene.add(scenery);
-
-  function scatter(factory, count, minScale, maxScale, clearance) {
-    let placed = 0;
-    let attempts = 0;
-    const limit = MAP_SIZE / 2 - 1.5;
-    while (placed < count && attempts < count * 60) {
-      attempts++;
-      const x = (random() * 2 - 1) * limit;
-      const z = (random() * 2 - 1) * limit;
-      if (onPath(x, z)) continue;
-      if (Math.hypot(x, z) < clearance) continue;
-      const prop = factory(THREE.MathUtils.lerp(minScale, maxScale, random()));
-      prop.position.set(x, 0, z);
-      prop.rotation.y = random() * Math.PI * 2;
-      scenery.add(prop);
-      placed++;
-    }
-    return placed;
-  }
-
-  const trees = scatter(makeTree, 30, 0.85, 1.35, 5);
-  const rocks = scatter(makeRock, 16, 0.6, 1.5, 5);
-  const bushes = scatter(makeBush, 22, 0.7, 1.2, 4);
+  // The print starts on the east wall of the living room, a little past the
+  // sofa. Placed via the same wall maths the carry path uses so it lands flush
+  // against the plaster rather than guessed at.
+  furniture.placeMounted('art', 11.7, -2);
 
   // ---------- Player ----------
 
@@ -228,10 +127,53 @@ async function main() {
   look.distance = CAMERA_DISTANCE;
   look.targetDistance = CAMERA_DISTANCE;
   const player = new Player();
+  player.position.set(SPAWN.x, 0, SPAWN.z);
   scene.add(player.group);
   await player.ready;
 
   document.getElementById('loading').classList.add('hidden');
+
+  // ---------- Buttons ----------
+
+  // pointerdown rather than click for the press itself: no 300ms tap delay,
+  // and it feels immediate on touch. preventDefault suppresses the
+  // compatibility mouse events.
+  //
+  // A mouse press fires both pointerdown and click, so a guard is needed or the
+  // handler runs twice. Touch has no click once pointerdown is defaulted, which
+  // leaves the guard cleared for the keyboard path below.
+  const actionButton = document.getElementById('action');
+  const rotateButton = document.getElementById('rotate');
+  let handledByPointer = false;
+
+  /** One verb: place the carried piece, or use whatever is in range. */
+  function useAction() {
+    if (furniture.carried) furniture.drop();
+    else if (furniture.target) furniture.target.use();
+  }
+
+  actionButton.addEventListener('pointerdown', (event) => {
+    event.preventDefault();
+    handledByPointer = true;
+    useAction();
+  });
+  actionButton.addEventListener('pointerup', (event) => event.preventDefault());
+  actionButton.addEventListener('pointercancel', () => { handledByPointer = false; });
+
+  // Keyboard parity for Enter/Space on the focused button.
+  actionButton.addEventListener('click', (event) => {
+    event.preventDefault();
+    if (handledByPointer) {
+      handledByPointer = false;
+      return;
+    }
+    useAction();
+  });
+
+  rotateButton.addEventListener('pointerdown', (event) => {
+    event.preventDefault();
+    furniture.rotate();
+  });
 
   // ---------- Resize ----------
 
@@ -250,13 +192,21 @@ async function main() {
 
   const clock = new THREE.Clock();
   const stickVector = new THREE.Vector2();
-  const cameraTarget = new THREE.Vector3();
+  const cameraFocus = new THREE.Vector3();
   const cameraDesired = new THREE.Vector3();
+  const scratch = { x: 0, z: 0 };
+  const solidRects = [];
 
-  // Camera orbits around a yaw that trails the player's heading, so the
-  // plushie always faces up-screen while walking.
+  // The camera yaw is now entirely the player's own doing: the view stays exactly
+  // where the drag left it. Both mechanisms that used to undo a manual rotation
+  // are gone, because both were fighting what was asked for:
+  //   - the follow chase pulled cameraYaw toward the character's heading, which
+  //     silently absorbed the drag. This is the "view snaps back" behaviour.
+  //   - the recentre decayed yawOffset back to zero on any walk.
+  // With neither, the camera only moves when the player drags it, so the stick's
+  // basis is stable. That also means the old spin hazard cannot occur: it only
+  // existed because the camera used to rotate itself in response to input.
   let cameraYaw = 0;
-  let cameraFocus = new THREE.Vector3();
 
   function tick() {
     requestAnimationFrame(tick);
@@ -264,57 +214,60 @@ async function main() {
     const dt = Math.min(clock.getDelta(), 0.05);
 
     stickVector.set(joystick.vector.x, joystick.vector.y);
-    const walking = stickVector.length() > 0.01;
 
-    // Drag-to-look contributes an offset on top of the follow yaw, and eases
-    // back to zero as soon as the player walks. The offset is resolved BEFORE
-    // movement so the stick stays camera-relative to what is on screen.
-    const zoomDistance = look.update(dt, walking, 3.2);
+    // The offset persists rather than easing back: it is the player's view.
+    const zoomDistance = look.update(dt);
     const pitch = THREE.MathUtils.clamp(
       CAMERA_PITCH + (look.tiltOffset || 0),
       THREE.MathUtils.degToRad(28),
       THREE.MathUtils.degToRad(76)
     );
 
-    // The yaw the stick is measured against, including the manual look offset.
-    const effectiveYaw = cameraYaw + look.yawOffset;
+    // The stick is measured against the rotated view, so pushing up always
+    // moves up-screen in the orientation the player set.
+    cameraYaw = look.yawOffset;
 
-    // Rotate the screen-space stick into world space here so the camera-follow
-    // gate can see which way the player is actually travelling.
-    const fCos = Math.cos(effectiveYaw);
-    const fSin = Math.sin(effectiveYaw);
-    const travelX = stickVector.x * -fCos + stickVector.y * fSin;
-    const travelZ = stickVector.x * fSin + stickVector.y * fCos;
-    // Positive = heading away from the camera, negative = toward it.
-    const awayFromCamera = travelX * fSin + travelZ * fCos;
+    player.update(dt, stickVector, cameraYaw);
 
-    // Ease the camera yaw toward the player's heading.
+    // ---------- Collision ----------
     //
-    // Only chase the heading when the stick is held essentially straight ahead.
-    // Input is camera-relative, so rotating the camera also rotates the basis the
-    // next frame's input is measured against. Any lateral stick component
-    // therefore feeds itself: the player turns, the camera follows, the input
-    // basis turns with it, and the camera spins without bound. Measured on a
-    // simulation of this loop, a held back-pull spun the camera ~2550deg in 6s,
-    // a held strafe ~220deg/s, and a held forward-diagonal made the player orbit
-    // in place. With the stick straight ahead the travel direction already
-    // equals the camera forward, so the chase is a self-cancelling no-op and is
-    // safe to run. Releasing the stick, or pushing forward again, is what pulls
-    // the view back behind the player.
-    const chaseWeight = stickVector.y > 0.9 && Math.abs(stickVector.x) < 0.3 ? 1 : 0;
-    if (chaseWeight > 0) {
-      let yawDelta = player.heading - cameraYaw;
-      while (yawDelta > Math.PI) yawDelta -= Math.PI * 2;
-      while (yawDelta < -Math.PI) yawDelta += Math.PI * 2;
-      cameraYaw += yawDelta * Player.damp(CAMERA_FOLLOW_RATE * 0.5, dt) * chaseWeight;
+    // Walls and solid furniture are both plain XZ rects, so this is
+    // circle-vs-AABB and nothing more. Solved after movement, and run in
+    // alternating passes because pushing clear of a wall can shove the plushie
+    // into the furniture beside it, which is exactly what happens in a doorway.
+    scratch.x = player.position.x;
+    scratch.z = player.position.z;
+
+    resolveAgainstRects(scratch, PLAYER_RADIUS, house.colliders, 2);
+
+    // Rebuilt in place rather than reallocated: this runs every frame, and a
+    // mobile target makes per-frame garbage worth avoiding.
+    let solidCount = 0;
+    for (const inst of furniture.instances) {
+      // A carried piece rides along above the floor, so it must not shove the
+      // player while it is being carried.
+      if (inst.solid && !inst.carried) solidRects[solidCount++] = inst.rect;
     }
+    solidRects.length = solidCount;
+    resolveAgainstRects(scratch, PLAYER_RADIUS, solidRects, 2);
+    resolveAgainstRects(scratch, PLAYER_RADIUS, house.colliders, 2);
 
-    player.update(dt, stickVector, effectiveYaw);
-
-    // Soft-clamp inside the field edges.
-    player.position.x = clampToMap(player.position.x);
-    player.position.z = clampToMap(player.position.z);
+    player.position.x = scratch.x;
+    player.position.z = scratch.z;
     player.group.position.copy(player.position);
+
+    // ---------- Interaction ----------
+
+    furniture.update(dt, player);
+    actionButton.disabled = !furniture.target && !furniture.carried;
+    actionButton.classList.toggle('carrying', !!furniture.carried);
+    rotateButton.classList.toggle('visible', !!furniture.carried);
+
+    // ---------- Walls ----------
+
+    house.updateWalls(dt, camera, player.position);
+
+    // ---------- Camera ----------
 
     // Look slightly ahead of the player so there is room to see where they
     // are heading.
@@ -324,9 +277,9 @@ async function main() {
 
     const horizontal = Math.cos(pitch) * zoomDistance;
     cameraDesired.set(
-      cameraFocus.x - Math.sin(effectiveYaw) * horizontal,
+      cameraFocus.x - Math.sin(cameraYaw) * horizontal,
       cameraFocus.y + Math.sin(pitch) * zoomDistance,
-      cameraFocus.z - Math.cos(effectiveYaw) * horizontal
+      cameraFocus.z - Math.cos(cameraYaw) * horizontal
     );
 
     camera.position.lerp(cameraDesired, Player.damp(CAMERA_FOLLOW_RATE, dt));
@@ -343,7 +296,11 @@ async function main() {
   tick();
 
   // Expose a little state for console tinkering.
-  window.game = { scene, camera, renderer, player, joystick, look, trees, rocks, bushes, MAP_SIZE };
+  window.game = {
+    scene, camera, renderer, player, joystick, look, house, furniture,
+    get carried() { return furniture.carried; },
+    get target() { return furniture.target; },
+  };
 }
 
 main().catch(fail);

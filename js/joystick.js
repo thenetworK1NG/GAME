@@ -9,6 +9,14 @@
 
 const DEAD_ZONE = 0.15;
 
+// Response curve. 1 is linear (the old behaviour). Higher values make small
+// deflections move the character less while still reaching full speed at the
+// rim. 1.6 was picked from measurements: half deflection now yields 0.56 u/s
+// instead of 0.95, which is the "less twitchy" feel, while full tilt still
+// gives the full 2.3 u/s. Anything much above this makes the lower half of the
+// stick crawl.
+const RESPONSE = 1.6;
+
 // Local helper so this module stays free of a three.js import.
 const clamp = (v, lo, hi) => (v < lo ? lo : v > hi ? hi : v);
 
@@ -133,8 +141,13 @@ export class Joystick {
 
     // Rescale past the dead zone so the first responsive input starts at 0
     // rather than jumping straight to 0.15.
-    const scaled = (magnitude - DEAD_ZONE) / (1 - DEAD_ZONE);
-    const factor = scaled / magnitude;
+    const linear = (magnitude - DEAD_ZONE) / (1 - DEAD_ZONE);
+
+    // Apply the response curve. 1.0 output still requires full deflection, so
+    // top walking speed is unchanged; only the low end is softened, which is
+    // what stops small thumb corrections from whipping the character around.
+    const eased = Math.pow(linear, RESPONSE);
+    const factor = eased / magnitude;
 
     this.vector.x = nx * factor;
     this.vector.y = ny * factor;
@@ -219,8 +232,9 @@ export class CameraLook {
   }
 
   _onDown(event) {
-    // The joystick handles its own touches; ignore anything that started on it.
-    if (event.target.closest && event.target.closest('#joystick')) return;
+    // The joystick and action button handle their own touches; ignore anything
+    // that started on either so pressing them never also orbits the camera.
+    if (event.target.closest && event.target.closest('#joystick, #action')) return;
 
     this._pointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
     event.preventDefault();
@@ -294,17 +308,15 @@ export class CameraLook {
   }
 
   /**
-   * Called each frame. `walking` enables the smooth recentre; returns the
-   * eased distance so the camera can use it directly.
+   * Called each frame; returns the eased distance so the camera can use it
+   * directly.
+   *
+   * The manual yaw and tilt offsets deliberately do NOT decay while walking. The
+   * player's rotated view is meant to persist across movement, and easing these
+   * back toward zero is what used to yank the camera round the moment they
+   * touched the stick.
    */
-  update(dt, walking, damping) {
-    if (walking) {
-      // Ease the manual offset back to the follow heading rather than cutting,
-      // so letting go of the drag does not snap the view.
-      this.yawOffset *= Math.exp(-damping * dt);
-      if (Math.abs(this.yawOffset) < 1e-4) this.yawOffset = 0;
-      this.tiltOffset = clamp(this.tiltOffset * Math.exp(-damping * dt), -0.22, 0.34);
-    }
+  update(dt) {
     this.distance += (this.targetDistance - this.distance) * (1 - Math.exp(-12 * dt));
     return this.distance;
   }
