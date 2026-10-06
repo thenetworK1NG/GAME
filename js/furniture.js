@@ -726,6 +726,11 @@ function createInstance(def, x, z, rotation, system) {
     carried: false,
     mounted,
     settle: 1,
+    // How far the arm currently holds the piece out, so the carry follow only
+    // re-searches when that distance stops clearing the plushie. Hysteresis
+    // lives here rather than on the position; see update(). Null until the first
+    // update of a carry.
+    carryDist: null,
 
     _bubble: bubble,
     _prompt: prompt,
@@ -874,6 +879,9 @@ export class FurnitureSystem {
     this.carried = inst;
     inst.carried = true;
     inst.settle = 1;
+    // Cleared so the first update picks a fresh extension. Carrying a stale one
+    // from a previous trip would start the piece at the wrong distance.
+    inst.carryDist = null;
     inst.speak(inst.def.quip);
 
     // Auto-align once, here. After this the rotate button owns the angle, so a
@@ -893,8 +901,37 @@ export class FurnitureSystem {
 
   rotate() {
     if (!this.carried) return;
-    this.carried.rotation += Math.PI / 2;
-    this.carried.rect = footprintRect(
+    const carried = this.carried;
+    carried.rotation += Math.PI / 2;
+
+    // A quarter turn swaps the footprint axes, so the distance that was just
+    // clear of the plushie usually is not. Re-derive it here instead of letting
+    // update() discover it on the next frame, which showed up as the piece
+    // jumping sideways a beat after the button was pressed.
+    if (!carried.mounted && this.keepOut) {
+      const { x: px, z: pz } = this.keepOut;
+      const heading = this._playerHeading || 0;
+      const sin = Math.sin(heading);
+      const cos = Math.cos(heading);
+      const clearAt = (d) => !resolveCircleRect(
+        px, pz, PLAYER_RADIUS,
+        footprintRect(
+          snap(px + sin * d), snap(pz + cos * d), carried.rotation, carried.def.footprint
+        )
+      );
+      // Prefer holding it closer if the new orientation allows, so a turn does
+      // not fling a big piece to arm's length.
+      let dist = null;
+      for (let d = CARRY_DISTANCE; d <= CARRY_MAX_DISTANCE; d += GRID) {
+        if (clearAt(d)) {
+          dist = d;
+          break;
+        }
+      }
+      carried.carryDist = dist ?? CARRY_MAX_DISTANCE;
+    }
+
+    carried.rect = footprintRect(
       this.carried.x, this.carried.z, this.carried.rotation, this.carried.def.footprint
     );
   }
@@ -984,6 +1021,8 @@ export class FurnitureSystem {
     // loop, can still keep furniture off the player's body.
     this.keepOut.x = px;
     this.keepOut.z = pz;
+    // Read back by rotate(), which re-derives the carry cell immediately.
+    this._playerHeading = player.heading;
 
     const carried = this.carried;
     if (carried && carried.mounted) {
@@ -1017,28 +1056,43 @@ export class FurnitureSystem {
       // refuses to bury the player, the outline stays amber the entire time.
       // Searching outward handles every size and rotation uniformly, including
       // a wide piece held broadside-on.
-      let tx = px;
-      let tz = pz;
-      let clear = false;
-      for (let d = CARRY_DISTANCE; d <= CARRY_MAX_DISTANCE; d += GRID) {
-        const cx = snap(px + Math.sin(player.heading) * d);
-        const cz = snap(pz + Math.cos(player.heading) * d);
-        if (!resolveCircleRect(
-              px, pz, PLAYER_RADIUS,
-              footprintRect(cx, cz, carried.rotation, carried.def.footprint)
-            )) {
-          tx = cx;
-          tz = cz;
-          clear = true;
-          break;
+      //
+      // Only the extension distance is snapped, and only re-derived when the
+      // current one stops clearing (see below). Snapping the *position* to the
+      // grid every frame is what made placement feel twitchy: a centimetre of
+      // walking flipped the piece between neighbouring cells, so it leapt
+      // around instead of travelling with the plushie. The grid is applied to
+      // the position at drop time, where one decisive snap belongs.
+      const sin = Math.sin(player.heading);
+      const cos = Math.cos(player.heading);
+      const at = (d) => footprintRect(
+        snap(px + sin * d), snap(pz + cos * d), carried.rotation, carried.def.footprint
+      );
+      const clearAt = (d) => !resolveCircleRect(px, pz, PLAYER_RADIUS, at(d));
+
+      // Reuse the current extension whenever it still clears, and only
+      // re-search when it does not. That reuse is the whole fix: re-deriving
+      // the distance every frame let it oscillate between two candidates as the
+      // plushie walked, so the piece hopped. Re-searching from CARRY_DISTANCE
+      // outward means it prefers the closest clear hold each time it does run.
+      let dist = carried.carryDist ?? CARRY_DISTANCE;
+      if (!clearAt(dist)) {
+        dist = null;
+        for (let d = CARRY_DISTANCE; d <= CARRY_MAX_DISTANCE; d += GRID) {
+          if (clearAt(d)) {
+            dist = d;
+            break;
+          }
         }
+        // Bigger than the carry arm can clear at this angle. Fall back to the far
+        // end so it at least stops overlapping the player outright.
+        if (dist === null) dist = CARRY_MAX_DISTANCE;
       }
-      if (!clear) {
-        // Bigger than the carry arm can clear at this angle. Fall back to the
-        // far end so it at least stops overlapping the player outright.
-        tx = snap(px + Math.sin(player.heading) * CARRY_MAX_DISTANCE);
-        tz = snap(pz + Math.cos(player.heading) * CARRY_MAX_DISTANCE);
-      }
+      carried.carryDist = dist;
+
+      // Continuous, not gridded: the held piece tracks the plushie exactly.
+      const tx = px + sin * dist;
+      const tz = pz + cos * dist;
 
       carried.group.position.set(
         tx,

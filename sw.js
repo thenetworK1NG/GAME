@@ -12,7 +12,7 @@
  * Bump CACHE_VERSION to invalidate everything on the next load.
  */
 
-const CACHE_VERSION = 'plushie-v1';
+const CACHE_VERSION = 'plushie-v2';
 
 // Cross-origin URLs the importmap points at. Requested at install time so the
 // first offline launch has them without waiting on a fetch.
