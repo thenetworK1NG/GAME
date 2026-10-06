@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { buildHouse, resolveAgainstRects, PLAYER_RADIUS } from './house.js';
 import { FurnitureSystem, registerDefaults } from './furniture.js';
+import { placeDoor } from './portal.js';
 
 // Background, shared with index.html so the loading overlay does not flash a
 // different colour before the canvas exists.
@@ -19,7 +20,7 @@ const START_LAYOUT = [
   { id: 'sign', x: 3.0, z: -2.0, rotation: 0 },
 ];
 
-const SPAWN = { x: 6.0, z: -1.0 };
+const SPAWN = { x: 6.0, z: -1.0, heading: 0 };
 
 /**
  * The house as a world: scene, lights, furniture and everything that only
@@ -34,7 +35,7 @@ const SPAWN = { x: 6.0, z: -1.0 };
  *   rotate()     the rotate button
  *   enter()/exit()  optional world switches
  */
-export function createHouseWorld({ camera, player, sounds, actionButton, rotateButton }) {
+export function createHouseWorld({ camera, player, sounds, actionButton, rotateButton, portal }) {
   const scene = new THREE.Scene();
   scene.background = new THREE.Color(BACKDROP);
   // No fog: it was tuned for an open field reaching 60 units, and inside a 24
@@ -88,6 +89,10 @@ export function createHouseWorld({ camera, player, sounds, actionButton, rotateB
   // against the plaster rather than guessed at.
   furniture.placeMounted('art', 11.7, -2);
 
+  // The front door goes in last, because it needs both the furniture system to
+  // hang it in and the house it was cut for to fade it with.
+  placeDoor(furniture, house, portal);
+
   // ---------- Per-frame scratch ----------
   //
   // Rebuilt in place rather than reallocated: this runs every frame, and a
@@ -139,6 +144,7 @@ export function createHouseWorld({ camera, player, sounds, actionButton, rotateB
   }
 
   return {
+    id: 'house',
     scene,
     spawn: SPAWN,
     house,

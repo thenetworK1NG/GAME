@@ -12,7 +12,7 @@
  * Bump CACHE_VERSION to invalidate everything on the next load.
  */
 
-const CACHE_VERSION = 'plushie-v2';
+const CACHE_VERSION = 'plushie-v3';
 
 // Cross-origin URLs the importmap points at. Requested at install time so the
 // first offline launch has them without waiting on a fetch.
@@ -32,11 +32,22 @@ const PRECACHE_URLS = [
   './icon-512.png',
   './icon-maskable-512.png',
   './js/game.js',
+  './js/house-world.js',
   './js/house.js',
   './js/furniture.js',
   './js/player.js',
   './js/joystick.js',
   './js/sound.js',
+  './js/menu.js',
+  './js/portal.js',
+  './js/farm/index.js',
+  './js/farm/island.js',
+  './js/farm/items.js',
+  './js/farm/inventory.js',
+  './js/farm/save.js',
+  './js/farm/plots.js',
+  './js/farm/plants.js',
+  './js/farm/hud.js',
   './models/plushie.glb',
   './art/LUB.png',
   './sound/pickup_place.mp3',

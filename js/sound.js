@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 
 /**
- * One recorded clip drives both interactions, so the two are distinguished by
+ * One recorded clip drives every interaction, so they are distinguished by
  * playback rate rather than by separate assets. Rate changes pitch *and*
  * duration together, which is what makes a lift read as a lift and a set-down as
  * a set-down from the same waveform.
@@ -14,6 +14,15 @@ import * as THREE from 'three';
 const CUES = {
   pickup: { rate: 1.45, gain: 0.55, offset: 0 },
   place: { rate: 0.75, gain: 0.7, offset: 0.04 },
+  // Using a door: pitched down hard and trimmed, so it reads as a latch rather
+  // than as another object being set down.
+  door: { rate: 0.5, gain: 0.5, offset: 0.02 },
+  // The farm loop. One waveform, four speeds: breaking ground is the thud,
+  // sowing is the tap, watering is the shush, reaping is the swish.
+  till: { rate: 0.32, gain: 0.5, offset: 0.05 },
+  sow: { rate: 1.55, gain: 0.38, offset: 0.01 },
+  water: { rate: 0.8, gain: 0.4, offset: 0.09 },
+  harvest: { rate: 1.05, gain: 0.5, offset: 0.06 },
 };
 
 // A new source node per play, rather than restarting one shared node. Restarting
@@ -61,7 +70,7 @@ export class GameSounds {
   }
 
   /**
-   * @param {'pickup'|'place'} cue
+   * @param {'pickup'|'place'|'door'|'till'|'sow'|'water'|'harvest'} cue
    */
   play(cue) {
     const cfg = CUES[cue];

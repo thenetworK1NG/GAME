@@ -18,6 +18,14 @@ export const DOOR_W = 2.5;
 // living -> bedroom -> spare and back.
 const DOOR_XZ = { z: -6, x: -6 };
 
+/**
+ * The front door: a gap in the north exterior wall of the living room, centred
+ * on x=6 so it lines up with the spawn point. Unlike the interior doorways it
+ * opens onto nothing -- it is a portal, and ./portal.js hangs a real door in
+ * the gap that you use to travel elsewhere.
+ */
+export const FRONT_DOOR = { x: 6, z: -HALF, axis: 'x' };
+
 export const PLAYER_RADIUS = 0.55;
 
 // ---------- Wall fading ----------
@@ -30,8 +38,8 @@ const FADE_OUT = 1 / 0.12;  // full -> faded, seconds
 const FADE_IN = 1 / 0.20;   // faded -> full, seconds
 const TEST_SHRINK = 0.05;   // shrink the test rect to stop edge chatter
 const OCCLUDE_BEFORE = 0.95; // must cross before reaching the player
-const HEADER_H = 0.5;       // doorway header depth
 const HEADER_REVEAL = 0.06; // how far headers proud of the wall they sit in
+export const HEADER_H = 0.5; // doorway header depth, part of the public shape
 const EPS = 1e-6;
 
 export const clamp = (v, lo, hi) => (v < lo ? lo : v > hi ? hi : v);
@@ -340,8 +348,11 @@ export function buildHouse(scene) {
     }
   }
 
-  // Exterior shell.
-  addWall('x', -HALF, -HALF, HALF, []);
+  // Exterior shell. The north wall carries the front-door gap; everything else
+  // is unbroken.
+  addWall('x', -HALF, -HALF, HALF, [
+    [FRONT_DOOR.x - DOOR_W / 2, FRONT_DOOR.x + DOOR_W / 2],
+  ]);
   addWall('x', HALF, -HALF, HALF, []);
   addWall('z', -HALF, -HALF, HALF, []);
   addWall('z', HALF, -HALF, HALF, []);
@@ -361,6 +372,17 @@ export function buildHouse(scene) {
     colliders,
     plinth,
     doors: { xz: dx, zz: dz },
+    frontDoor: FRONT_DOOR,
+
+    /**
+     * Adds anything that should dim when it stands between the camera and the
+     * plushie. `updateWalls` is agnostic about what it fades -- walls, headers
+     * and the front door all read the same shape -- so a door hung in the gap
+     * by another module joins the same pass instead of needing its own.
+     */
+    addFading(entry) {
+      fading.push(entry);
+    },
 
     /**
      * Fades any wall standing between the camera and the plushie.

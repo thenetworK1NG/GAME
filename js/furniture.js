@@ -415,6 +415,9 @@ export function registerObject(def) {
     quip: 'nice',
     markerY: 2.4,
     build: () => new THREE.Group(),
+    // Which glyph the floating prompt shows: 'up' when it can be picked up,
+    // 'down' when it is merely usable, or an explicit override like 'go'.
+    prompt: null,
     ...def,
   });
   return def.id;
@@ -569,6 +572,14 @@ function makePromptIcon(direction) {
     ctx.moveTo(cx - 22, cy + 12);
     ctx.lineTo(cx, cy - 12);
     ctx.lineTo(cx + 22, cy + 12);
+  } else if (direction === 'go') {
+    // Stepping through: an arrow crossing a threshold, for objects whose action
+    // is a doorway rather than a pickup.
+    ctx.moveTo(cx - 24, cy);
+    ctx.lineTo(cx + 14, cy);
+    ctx.moveTo(cx + 2, cy - 13);
+    ctx.lineTo(cx + 16, cy);
+    ctx.lineTo(cx + 2, cy + 13);
   } else {
     ctx.moveTo(cx - 22, cy - 12);
     ctx.lineTo(cx, cy + 12);
@@ -709,7 +720,7 @@ function createInstance(def, x, z, rotation, system) {
   group.rotation.y = rotation;
 
   const bubble = makeSpeechBubble();
-  const prompt = makePromptIcon(def.carryable ? 'up' : 'down');
+  const prompt = makePromptIcon(def.prompt || (def.carryable ? 'up' : 'down'));
   group.add(bubble.sprite, prompt.sprite);
 
   const inst = {
@@ -750,6 +761,11 @@ function createInstance(def, x, z, rotation, system) {
     },
 
     use() {
+      // Objects can own their action outright. The front door is the first:
+      // pressing it opens the destination menu rather than making the plushie
+      // say a quip, and it is not carryable, so the two branches below would
+      // have nowhere useful to go.
+      if (def.onUse) return def.onUse(this, system);
       if (this.carryable) system.pickUp(this);
       else this.speak(def.quip);
     },

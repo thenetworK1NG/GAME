@@ -2,7 +2,9 @@ import * as THREE from 'three';
 import { Player } from './player.js';
 import { Joystick, CameraLook } from './joystick.js';
 import { GameSounds } from './sound.js';
+import { createPortal } from './portal.js';
 import { createHouseWorld } from './house-world.js';
+import { createFarmWorld } from './farm/index.js';
 
 // Camera framing. These belong to the shell, not to a world: there is one
 // camera, shared by every world, and a world only differs by the optional
@@ -35,7 +37,7 @@ const CAMERA_RIG = {
  * in ./farm/. A world is:
  *
  *   scene            THREE.Scene to render
- *   spawn            {x, z} the plushie appears at on entry
+ *   spawn            {x, z, heading} where the plushie appears on entry
  *   update(dt)       per-frame world work
  *   useAction()      the action button
  *   rotate()         the rotate button
@@ -101,10 +103,24 @@ async function main() {
 
   // ---------- Worlds ----------
 
-  const houseWorld = createHouseWorld({
-    camera, player, sounds, actionButton, rotateButton,
+  // Frozen while a sheet is open and for the whole of a world swap, so nothing
+  // walks anywhere while the player is choosing where to go.
+  let paused = false;
+
+  // Built before the worlds because a door needs something to open, but its
+  // callbacks only fire later, once `worlds` below actually exists.
+  const portal = createPortal({
+    onTravel: (id) => { if (worlds[id]) enterWorld(worlds[id]); },
+    onPause: (value) => { paused = value; },
   });
-  const worlds = { house: houseWorld };
+
+  const houseWorld = createHouseWorld({
+    camera, player, sounds, actionButton, rotateButton, portal,
+  });
+  const farmWorld = createFarmWorld({
+    camera, player, sounds, actionButton, rotateButton, portal,
+  });
+  const worlds = { house: houseWorld, farm: farmWorld };
   let active = null;
   // Set whenever the active world changes, so the camera cuts to the new view
   // instead of lerping across the gap between two places.
@@ -116,6 +132,7 @@ async function main() {
     active = world;
     Object.assign(rig, CAMERA_RIG, world.rig);
     player.position.set(world.spawn.x, 0, world.spawn.z);
+    if (world.spawn.heading !== undefined) player.heading = world.spawn.heading;
     world.enter?.();
     snapCamera = true;
   }
@@ -138,6 +155,7 @@ async function main() {
   actionButton.addEventListener('pointerdown', (event) => {
     event.preventDefault();
     handledByPointer = true;
+    if (paused) return;
     active.useAction?.();
   });
   actionButton.addEventListener('pointerup', (event) => event.preventDefault());
@@ -150,11 +168,13 @@ async function main() {
       handledByPointer = false;
       return;
     }
+    if (paused) return;
     active.useAction?.();
   });
 
   rotateButton.addEventListener('pointerdown', (event) => {
     event.preventDefault();
+    if (paused) return;
     active.rotate?.();
   });
 
@@ -200,45 +220,49 @@ async function main() {
     // Clamped so a stalled frame cannot teleport the plushie through a wall.
     const dt = Math.min(timer.getDelta(), 0.05);
 
-    stickVector.set(joystick.vector.x, joystick.vector.y);
+    // While paused the world and the camera are held exactly where they are.
+    // The frame keeps rendering behind the sheet; it just stops advancing.
+    if (!paused) {
+      stickVector.set(joystick.vector.x, joystick.vector.y);
 
-    // The offset persists rather than easing back: it is the player's view.
-    const zoomDistance = look.update(dt);
-    const pitch = THREE.MathUtils.clamp(
-      rig.pitch + (look.tiltOffset || 0),
-      PITCH_MIN,
-      PITCH_MAX
-    );
+      // The offset persists rather than easing back: it is the player's view.
+      const zoomDistance = look.update(dt);
+      const pitch = THREE.MathUtils.clamp(
+        rig.pitch + (look.tiltOffset || 0),
+        PITCH_MIN,
+        PITCH_MAX
+      );
 
-    // The stick is measured against the rotated view, so pushing up always
-    // moves up-screen in the orientation the player set.
-    cameraYaw = look.yawOffset;
+      // The stick is measured against the rotated view, so pushing up always
+      // moves up-screen in the orientation the player set.
+      cameraYaw = look.yawOffset;
 
-    player.update(dt, stickVector, cameraYaw);
-    active.update(dt);
+      player.update(dt, stickVector, cameraYaw);
+      active.update(dt);
 
-    // ---------- Camera ----------
+      // ---------- Camera ----------
 
-    // Look slightly ahead of the player so there is room to see where they
-    // are heading.
-    cameraFocus.x = player.position.x + Math.sin(player.heading) * rig.lookAhead;
-    cameraFocus.z = player.position.z + Math.cos(player.heading) * rig.lookAhead;
-    cameraFocus.y = rig.height * 0.55;
+      // Look slightly ahead of the player so there is room to see where they
+      // are heading.
+      cameraFocus.x = player.position.x + Math.sin(player.heading) * rig.lookAhead;
+      cameraFocus.z = player.position.z + Math.cos(player.heading) * rig.lookAhead;
+      cameraFocus.y = rig.height * 0.55;
 
-    const horizontal = Math.cos(pitch) * zoomDistance;
-    cameraDesired.set(
-      cameraFocus.x - Math.sin(cameraYaw) * horizontal,
-      cameraFocus.y + Math.sin(pitch) * zoomDistance,
-      cameraFocus.z - Math.cos(cameraYaw) * horizontal
-    );
+      const horizontal = Math.cos(pitch) * zoomDistance;
+      cameraDesired.set(
+        cameraFocus.x - Math.sin(cameraYaw) * horizontal,
+        cameraFocus.y + Math.sin(pitch) * zoomDistance,
+        cameraFocus.z - Math.cos(cameraYaw) * horizontal
+      );
 
-    if (snapCamera) {
-      camera.position.copy(cameraDesired);
-      snapCamera = false;
-    } else {
-      camera.position.lerp(cameraDesired, Player.damp(rig.followRate, dt));
+      if (snapCamera) {
+        camera.position.copy(cameraDesired);
+        snapCamera = false;
+      } else {
+        camera.position.lerp(cameraDesired, Player.damp(rig.followRate, dt));
+      }
+      camera.lookAt(cameraFocus);
     }
-    camera.lookAt(cameraFocus);
 
     renderer.render(active.scene, camera);
   }
@@ -247,10 +271,12 @@ async function main() {
 
   // Expose a little state for console tinkering.
   window.game = {
-    renderer, camera, player, joystick, look, sounds, worlds, enterWorld,
+    renderer, camera, player, joystick, look, sounds, worlds, portal, enterWorld,
+    get paused() { return paused; },
     get active() { return active; },
     get scene() { return active.scene; },
     get house() { return houseWorld; },
+    get farm() { return farmWorld; },
     get furniture() { return houseWorld.furniture; },
     get carried() { return houseWorld.furniture.carried; },
     get target() { return houseWorld.furniture.target; },
