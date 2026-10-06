@@ -474,7 +474,8 @@
 
   #wallet .chip svg { width: 16px; height: 16px; flex: none; }
   #wallet .chip b { font-weight: 650; font-variant-numeric: tabular-nums; }
-  #wallet.empty .chip.seeds { opacity: 0.45; }
+  #wallet .chip.coins svg { color: #ffd77a; }
+  #wallet.empty .chip { opacity: 0.45; }
 
   /* Tool rail: the four moves of the loop, stacked down the left edge. The
      vertial middle stays clear of the stick (bottom) and the menu (top right). */
@@ -506,6 +507,7 @@
     border: 1.5px solid rgba(255, 255, 255, 0.16);
     background: rgba(17, 24, 32, 0.55);
     color: var(--ui);
+    position: relative;
     display: flex;
     align-items: center;
     justify-content: center;
@@ -532,6 +534,30 @@
   #tool-rail .tool.ready:not(.selected) {
     border-color: rgba(255, 200, 90, 0.65);
   }
+
+  /* Wear: a sliver under the icon. Full when new, gone when it breaks, and a
+     reddish blink while it is down to its last few actions. */
+  #tool-rail .tool .wear {
+    position: absolute;
+    left: 7px;
+    right: 7px;
+    bottom: 5px;
+    height: 3px;
+    border-radius: 3px;
+    background: rgba(140, 208, 255, 0.65);
+    width: 100%;
+    pointer-events: none;
+  }
+
+  #tool-rail .tool.worn .wear { background: rgba(255, 120, 105, 0.75); }
+
+  /* Not owned yet (a watering can you have not bought): dimmed and barred. */
+  #tool-rail .tool.locked {
+    opacity: 0.38;
+    border-style: dashed;
+  }
+
+  #tool-rail .tool.locked .wear { display: none; }
 
   /* Hint: one line above the stick saying what the next press will do. Also
      the place the no-op reason lands ("Already wet", "Out of seeds"...). */
@@ -686,6 +712,121 @@
     font-size: 12.5px;
     line-height: 1.35;
     color: rgba(255, 255, 255, 0.55);
+  }
+
+  /* ---------- Market stall ---------- */
+
+  /* Same sheet, same tap-to-dismiss pattern as the destination picker; the
+     rows list what the stall will trade for coins. */
+  #shop {
+    position: fixed;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 20px;
+    background: rgba(0, 0, 0, 0.48);
+    opacity: 0;
+    visibility: hidden;
+    pointer-events: none;
+    transition: opacity 160ms ease, visibility 0s linear 160ms;
+    z-index: 19;
+  }
+
+  #shop.open {
+    opacity: 1;
+    visibility: visible;
+    pointer-events: auto;
+    transition: opacity 160ms ease, visibility 0s;
+  }
+
+  #shop.open .dest-sheet { transform: none; }
+
+  #shop-close {
+    width: 34px;
+    height: 34px;
+    border: none;
+    border-radius: 9px;
+    background: rgba(255, 255, 255, 0.08);
+    color: var(--ui);
+    font: inherit;
+    font-size: 19px;
+    line-height: 1;
+    cursor: pointer;
+    touch-action: manipulation;
+    -webkit-tap-highlight-color: transparent;
+    transition: background 140ms ease;
+  }
+
+  #shop-close:active { background: rgba(255, 255, 255, 0.16); }
+
+  .shop-balance {
+    padding: 12px 18px 0;
+    font-size: 12.5px;
+    line-height: 1.4;
+    color: rgba(255, 255, 255, 0.55);
+  }
+
+  #shop-list {
+    display: grid;
+    gap: 10px;
+    padding: 14px;
+  }
+
+  .shop-row {
+    display: grid;
+    grid-template-columns: 44px 1fr auto;
+    column-gap: 12px;
+    align-items: center;
+    padding: 10px 12px;
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    border-radius: 12px;
+    background: rgba(255, 255, 255, 0.06);
+  }
+
+  .shop-icon {
+    width: 44px;
+    height: 44px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 11px;
+    background: rgba(255, 255, 255, 0.1);
+  }
+
+  .shop-icon svg { width: 26px; height: 26px; }
+
+  .shop-name { font-size: 14px; font-weight: 600; }
+
+  .shop-meta {
+    margin-top: 1px;
+    font-size: 12px;
+    color: rgba(255, 255, 255, 0.55);
+  }
+
+  .shop-action {
+    min-width: 64px;
+    padding: 8px 12px;
+    border: none;
+    border-radius: 10px;
+    background: rgba(255, 200, 90, 0.16);
+    color: #ffd77a;
+    font: inherit;
+    font-size: 13px;
+    font-weight: 600;
+    cursor: pointer;
+    touch-action: manipulation;
+    -webkit-tap-highlight-color: transparent;
+    transition: background 140ms ease, transform 140ms ease;
+  }
+
+  .shop-action:active { transform: scale(0.95); }
+
+  .shop-action[disabled] {
+    opacity: 0.4;
+    cursor: default;
+    background: rgba(255, 255, 255, 0.08);
+    color: rgba(255, 255, 255, 0.45);
   }
 
   /* ---------- Travel fade ---------- */
@@ -874,6 +1015,15 @@
        what you have banked. The tool rail buttons are injected from TOOLS in
        js/farm/items.js. -->
   <div id="wallet" aria-hidden="true">
+    <div class="chip coins">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+           stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <circle cx="12" cy="12" r="8.6" />
+        <path d="M10.7 15.6v-7.2" />
+        <path d="M10.7 9.5h2.4a1.8 1.8 0 0 1 0 3.6h-2.4" />
+      </svg>
+      <b id="wallet-coins">0</b>
+    </div>
     <div class="chip seeds">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
            stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
@@ -906,6 +1056,18 @@
       </div>
       <!-- Cards are built from DESTINATIONS in js/portal.js. -->
       <div id="dest-cards"></div>
+    </div>
+  </div>
+
+  <div id="shop" role="dialog" aria-modal="true" aria-labelledby="shop-title">
+    <div class="dest-sheet">
+      <div class="dest-head">
+        <h2 id="shop-title">Market stall</h2>
+        <button id="shop-close" type="button" aria-label="Close">&times;</button>
+      </div>
+      <!-- Rows are built by the farm world from the catalogue in js/farm/items.js. -->
+      <div class="shop-balance">Buy seeds and tools, or sell the wheat you bring back.</div>
+      <div id="shop-list"></div>
     </div>
   </div>
 

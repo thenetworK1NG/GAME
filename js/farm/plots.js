@@ -8,7 +8,7 @@
  */
 
 import {
-  WATER_TIME, catchUp, growthStep, isReady, CROPS, TOOLS,
+  WATER_TIME, catchUp, growthStep, isReady, CROPS,
 } from './items.js';
 
 export const PLOT_COUNT = 6;
@@ -59,6 +59,13 @@ export function plotInReach(plots, x, z, reach = REACH) {
   return best;
 }
 
+/** Whether one particular plot is close enough to work. */
+export function plotWithinReach(plot, x, z, reach = REACH) {
+  const c = plotCenter(plot);
+  const d = (c.x - x) * (c.x - x) + (c.z - z) * (c.z - z);
+  return d <= reach * reach;
+}
+
 /**
  * Rebuilds the field from a save, running growth forward over the gap in one
  * pass per plot. A save with the wrong number of plots is discarded outright:
@@ -95,15 +102,19 @@ export function serialiseField(plots) {
 
 /**
  * What a tool can do to a plot right now, with a machine-readable reason for
- * when it cannot. The HUD turns the reason into a hint; auto-selection only
- * cares about `ok`.
+ * when it cannot. The HUD turns the reason into a hint; how a tool *wears*
+ * comes in through `tools` — a map of remaining uses, with `null` meaning the
+ * tool is not owned at all.
  *
+ * @param {object} tools  `{ hoe: number|null, can: number|null }`
  * @returns {{ok: boolean, reason: string}}
  */
-export function canUse(plot, tool, inventory) {
+export function canUse(plot, tool, inventory, tools = {}) {
   if (!plot) return { ok: false, reason: 'no-plot' };
 
   if (tool === 'hoe') {
+    if (tools.hoe == null) return { ok: false, reason: 'no-tool' };
+    if (tools.hoe <= 0) return { ok: false, reason: 'worn' };
     if (plot.tilled) return { ok: false, reason: 'already-tilled' };
     if (plot.crop) return { ok: false, reason: 'has-crop' };
     return { ok: true, reason: 'till' };
@@ -122,6 +133,8 @@ export function canUse(plot, tool, inventory) {
     if (!plot.crop) return { ok: false, reason: 'empty' };
     if (isReady(plot.growth)) return { ok: false, reason: 'ripened' };
     if (plot.water >= WATER_TIME) return { ok: false, reason: 'full-water' };
+    if (tools.can == null) return { ok: false, reason: 'no-tool' };
+    if (tools.can <= 0) return { ok: false, reason: 'worn' };
     return { ok: true, reason: 'water' };
   }
 
@@ -135,31 +148,23 @@ export function canUse(plot, tool, inventory) {
 }
 
 /**
- * The tool that would work on this plot, in loop order. Returns null when
- * nothing would - the plot is finished for now, and the action button should
- * say so rather than performing a wrong action.
- */
-export function autoTool(plot, inventory) {
-  for (const tool of TOOLS) {
-    if (canUse(plot, tool, inventory).ok) return tool;
-  }
-  return null;
-}
-
-/**
  * Performs the action. Returns the same shape `canUse` does, so a caller can
  * check first and act second without the two drifting apart.
+ *
+ * Success wears the hoe and the can by one action; the seed and the hand do
+ * not wear. The refusal path never decrements.
  *
  * Harvest keeps the plot tilled. Ground you have already broken is not
  * something you should have to break again, and clearing it back to grass
  * would make the field a chore to walk across between seasons.
  */
-export function useTool(plot, tool, inventory) {
-  const verdict = canUse(plot, tool, inventory);
+export function useTool(plot, tool, inventory, tools = {}) {
+  const verdict = canUse(plot, tool, inventory, tools);
   if (!verdict.ok) return verdict;
 
   if (tool === 'hoe') {
     plot.tilled = true;
+    tools.hoe -= 1;
     return verdict;
   }
 
@@ -175,6 +180,7 @@ export function useTool(plot, tool, inventory) {
 
   if (tool === 'can') {
     plot.water = WATER_TIME;
+    tools.can -= 1;
     return verdict;
   }
 

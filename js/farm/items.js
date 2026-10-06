@@ -23,24 +23,34 @@ const clamp01 = (v) => (v < 0 ? 0 : v > 1 ? 1 : v);
 
 /**
  * The catalogue. One crop for now, and that is the point: wheat is the whole
- * economy, and the yield replaces the seed it cost, so the field closes its own
- * loop with no shop to balance around.
+ * economy. The seed is bought, not grown back, so the field needs the shop the
+ * way a farm needs a market: profit only lands when you sell what grew.
  */
 export const CROPS = {
   wheat: {
     id: 'wheat',
     name: 'Wheat',
     seedCost: 1,
-    yield: { wheat: 1, seeds: 1 },
+    yield: { wheat: 3 },
   },
 };
 
 export const CROP_IDS = Object.keys(CROPS);
 
+// What the shop charges, in coins. Seeds are the consumable, the hoe and the
+// can are the durable gear.
+export const PRICES = { seed: 2, hoe: 25, can: 25 };
+
+// What the shop pays for one unit of what you bring back.
+export const SELL_PRICE = { wheat: 1 };
+
+// How many actions a tool survives before it is worn out and has to be
+// replaced. The hand is free and never wears.
+export const DURABILITY = { hoe: 40, can: 40 };
+
 /**
- * Tools, in the order the rail lists them and the order auto-selection walks
- * them. The order is the order of the farming loop itself: break ground, sow,
- * water, reap.
+ * Tools, in the order the rail lists them. The order is the order of the
+ * farming loop itself: break ground, sow, water, reap.
  */
 export const TOOLS = ['hoe', 'seeds', 'can', 'hand'];
 
@@ -49,6 +59,8 @@ export const TOOL_DEFS = {
     id: 'hoe',
     label: 'Hoe',
     hint: 'Break the ground',
+    durable: true,
+    durability: DURABILITY.hoe,
     // Stroke icons rather than fills: the rest of the HUD is outline art.
     icon:
       '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" ' +
@@ -71,6 +83,8 @@ export const TOOL_DEFS = {
     id: 'can',
     label: 'Water',
     hint: 'Double the growth while it lasts',
+    durable: true,
+    durability: DURABILITY.can,
     icon:
       '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" ' +
       'stroke-width="2" stroke-linecap="round" stroke-linejoin="round">' +

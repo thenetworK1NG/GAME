@@ -23,6 +23,8 @@ const CUES = {
   sow: { rate: 1.55, gain: 0.38, offset: 0.01 },
   water: { rate: 0.8, gain: 0.4, offset: 0.09 },
   harvest: { rate: 1.05, gain: 0.5, offset: 0.06 },
+  // Money landing: short and bright, so buying and selling read as wins.
+  coin: { rate: 1.9, gain: 0.32, offset: 0 },
 };
 
 // A new source node per play, rather than restarting one shared node. Restarting
@@ -70,7 +72,7 @@ export class GameSounds {
   }
 
   /**
-   * @param {'pickup'|'place'|'door'|'till'|'sow'|'water'|'harvest'} cue
+   * @param {'pickup'|'place'|'door'|'till'|'sow'|'water'|'harvest'|'coin'} cue
    */
   play(cue) {
     const cfg = CUES[cue];

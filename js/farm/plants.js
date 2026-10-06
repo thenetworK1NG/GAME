@@ -40,6 +40,16 @@ const glowGeo = new THREE.PlaneGeometry(PLOT_CELL + 0.1, PLOT_CELL + 0.1);
 const barBgGeo = new THREE.PlaneGeometry(BAR_W, BAR_H);
 const barFillGeo = new THREE.PlaneGeometry(BAR_W, BAR_H);
 
+// A padded rectangle lying just over the soil. Transparent and depth-write off,
+// it is invisible in the render but a perfect target for the tap raycast: the
+// soil boxes only exist when tilled, and a ray hitting a plant stalk is a
+// worse target than the whole tile. `visible` stays true so Raycaster includes
+// it - opacity has no say in raycasting.
+const hitGeo = new THREE.PlaneGeometry(PLOT_CELL - PLOT_INSET + 0.06, PLOT_CELL - PLOT_INSET + 0.06);
+const hitMat = new THREE.MeshBasicMaterial({
+  transparent: true, opacity: 0, depthWrite: false, side: THREE.DoubleSide,
+});
+
 // Three stalks at slightly different leans, so a clump reads as wheat rather
 // than as a single post. Shared offsets, so every plot has the same character.
 const CLUMP = [
@@ -83,8 +93,19 @@ export function createPlants(plots, camera) {
   bar.visible = false;
   group.add(bar);
 
+  // Tap targets, one per plot, all in one place so the world can ray-cast the
+  // whole field in a single pass and first-hit maps straight to a plot.
+  const hits = new THREE.Group();
+  group.add(hits);
+
   const nodes = plots.map((plot) => {
     const c = plotCenter(plot);
+
+    const hit = new THREE.Mesh(hitGeo, hitMat);
+    hit.rotation.x = -Math.PI / 2;
+    hit.position.set(c.x, 0.03, c.z);
+    hit.userData.plot = plot;
+    hits.add(hit);
 
     // Per plot, not shared: wetness is a property of one square of ground, and
     // a single shared material would leave every plot the colour of whichever
@@ -149,6 +170,9 @@ export function createPlants(plots, camera) {
 
   return {
     group,
+    // The tap-target planes, indexed by plot. Ray-cast these to translate a
+    // screen tap into `userData.plot`.
+    hits,
 
     /** Re-reads every plot. Call after any action or after loading a save. */
     refresh() {

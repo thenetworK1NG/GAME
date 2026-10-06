@@ -1,15 +1,12 @@
 /**
- * What the plushie is carrying: seeds to spend and wheat to show for it.
- *
- * Plain counts behind accessors rather than a plain object, because the counts
- * are only ever meant to change through `spend` and `give`. That keeps "did you
- * actually have the seed?" in one place instead of re-checking it at every call
- * site and forgetting it at one.
+ * The plushie's purse: seeds to sow, wheat to sell, and the coins the selling
+ * brings in. Three numbers, and every transaction between them goes through
+ * `spend` and `give`, so "did you actually have it?" lives in one place.
  */
 
-export const KINDS = ['seeds', 'wheat'];
+export const KINDS = ['seeds', 'wheat', 'coins'];
 
-export const STARTING = { seeds: 10, wheat: 0 };
+export const STARTING = { seeds: 5, wheat: 0, coins: 30 };
 
 function normalise(data) {
   const out = {};
@@ -28,6 +25,7 @@ export function createInventory(start = STARTING) {
   return {
     get seeds() { return counts.seeds; },
     get wheat() { return counts.wheat; },
+    get coins() { return counts.coins; },
 
     has(kind, n = 1) {
       return KINDS.includes(kind) && counts[kind] >= n;

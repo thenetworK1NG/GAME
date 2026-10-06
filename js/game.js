@@ -118,7 +118,7 @@ async function main() {
     camera, player, sounds, actionButton, rotateButton, portal,
   });
   const farmWorld = createFarmWorld({
-    camera, player, sounds, actionButton, rotateButton, portal,
+    camera, player, sounds, actionButton, rotateButton, portal, renderer,
   });
   const worlds = { house: houseWorld, farm: farmWorld };
   let active = null;

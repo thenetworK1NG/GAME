@@ -44,11 +44,13 @@ export function createHud({ onPick = () => {} } = {}) {
   const wallet = need('wallet');
   const seedsEl = need('wallet-seeds');
   const wheatEl = need('wallet-wheat');
+  const coinsEl = need('wallet-coins');
   const hint = need('tool-hint');
   const glyphEl = need('action-glyph');
   const action = need('action');
 
   const buttons = new Map();
+  const wearEls = new Map();
   for (const id of TOOLS) {
     const def = TOOL_DEFS[id];
     const btn = document.createElement('button');
@@ -57,6 +59,14 @@ export function createHud({ onPick = () => {} } = {}) {
     btn.dataset.tool = id;
     btn.setAttribute('aria-label', def.label);
     btn.innerHTML = def.icon;
+    if (def.durable) {
+      // A sliver along the button's bottom edge that paints the tool's wear:
+      // full bar new, gap of air when it is about to break.
+      const wear = document.createElement('span');
+      wear.className = 'wear';
+      btn.appendChild(wear);
+      wearEls.set(id, wear);
+    }
     btn.addEventListener('click', () => onPick(id));
     rail.appendChild(btn);
     buttons.set(id, btn);
@@ -67,8 +77,10 @@ export function createHud({ onPick = () => {} } = {}) {
   // Last-painted state, so paint() never touches the DOM twice in a row.
   const last = {
     tool: null, glyph: null, ready: null, enabled: null,
-    hint: null, seeds: null, wheat: null, walletEmpty: null, carried: null,
+    hint: null, seeds: null, wheat: null, coins: null,
+    walletEmpty: null, carried: null,
   };
+  const lastWear = { hoe: null, can: null };
 
   function paint(state) {
     const tool = state.tool;
@@ -117,6 +129,7 @@ export function createHud({ onPick = () => {} } = {}) {
 
     const seeds = state.counts && state.counts.seeds;
     const wheat = state.counts && state.counts.wheat;
+    const coins = state.counts && state.counts.coins;
     if (seeds !== last.seeds) {
       last.seeds = seeds;
       seedsEl.textContent = String(seeds ?? 0);
@@ -125,10 +138,29 @@ export function createHud({ onPick = () => {} } = {}) {
       last.wheat = wheat;
       wheatEl.textContent = String(wheat ?? 0);
     }
-    const walletEmpty = (seeds ?? 0) === 0;
+    if (coins !== last.coins) {
+      last.coins = coins;
+      coinsEl.textContent = String(coins ?? 0);
+    }
+    const walletEmpty = (seeds ?? 0) === 0 && (wheat ?? 0) === 0 && (coins ?? 0) === 0;
     if (walletEmpty !== last.walletEmpty) {
       last.walletEmpty = walletEmpty;
       wallet.classList.toggle('empty', walletEmpty);
+    }
+
+    // Wear: a bar under the durable tools. `null` means the tool has never been
+    // bought, so the button looks locked; a number is the fraction of its life
+    // left, so a broken tool shows an empty bar and a nervous tint.
+    const wear = state.wear || {};
+    for (const [id, el] of wearEls) {
+      const w = wear[id]; // null | 0..1
+      if (w === lastWear[id]) continue;
+      lastWear[id] = w;
+      const held = w !== null && w !== undefined;
+      buttons.get(id).classList.toggle('locked', !held);
+      buttons.get(id).setAttribute('aria-disabled', held ? 'false' : 'true');
+      buttons.get(id).classList.toggle('worn', held && w <= 0);
+      if (held) el.style.width = (Math.max(0, Math.min(1, w)) * 100).toFixed(1) + '%';
     }
   }
 
