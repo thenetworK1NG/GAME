@@ -9,10 +9,10 @@
  * error panel over an empty sky.
  */
 
-export const SAVE_KEY = 'plushie.farm.v2';
+export const SAVE_KEY = 'plushie.farm.v3';
 
 // Bumped only when the shape below changes in a way the loader cannot read.
-const VERSION = 2;
+const VERSION = 3;
 
 let backing;
 let resolved = false;
@@ -51,8 +51,8 @@ function store() {
 export const available = () => storage() !== null;
 
 /**
- * @param {{inventory: object, plots: object[], tool?: string,
- *          tools?: object, now?: number}} state
+ * @param {{inventory: object, plots: object[], fences?: object[],
+ *          tool?: string, tools?: object, now?: number}} state
  * @returns {boolean} whether the write landed in real storage.
  */
 export function writeFarm(state) {
@@ -63,6 +63,7 @@ export function writeFarm(state) {
     tools: state.tools || null,
     inventory: state.inventory,
     plots: state.plots,
+    fences: state.fences || [],
   };
   try {
     store().setItem(SAVE_KEY, JSON.stringify(payload));
@@ -81,7 +82,8 @@ export function writeFarm(state) {
  * otherwise silently rewind growth, which reads as a crop going backwards.
  *
  * @returns {null | {elapsed: number, savedAt: number, tool: ?string,
- *                   tools: ?object, inventory: object, plots: object[]}}
+ *                   tools: ?object, inventory: object, plots: object[],
+ *                   fences: object[]}}
  */
 export function readFarm(now = Date.now()) {
   let raw;
@@ -116,6 +118,7 @@ export function readFarm(now = Date.now()) {
     tools: data.tools && typeof data.tools === 'object' ? data.tools : null,
     inventory: data.inventory && typeof data.inventory === 'object' ? data.inventory : null,
     plots: Array.isArray(data.plots) ? data.plots : null,
+    fences: Array.isArray(data.fences) ? data.fences : null,
   };
 }
 

@@ -6,10 +6,11 @@ import { createHud, DROP_ICON, GO_ICON } from './hud.js';
 import { createInventory } from './inventory.js';
 import {
   createField, restoreField, serialiseField, plotWithinReach,
-  useTool, canUse, tickField,
+  useTool, canUse, tickField, REACH, PLOT_CELL,
 } from './plots.js';
 import { createPlants } from './plants.js';
 import { TOOLS, TOOL_DEFS, PRICES, SELL_PRICE, DURABILITY } from './items.js';
+import { slotKey, slotMid, buildFences, forEachSlot } from './fences.js';
 import * as farmSave from './save.js';
 
 const SPAWN = { x: 0, z: 7.5, heading: Math.PI };
@@ -20,7 +21,7 @@ const STALL = { x: -5, z: 5 };
 
 // Tool id to the sound that voices it. The clip is one shared recording, so
 // the four actions are four speeds of the same thunk rather than four assets.
-const SOUNDS = { hoe: 'till', seeds: 'sow', can: 'water', hand: 'harvest' };
+const SOUNDS = { hoe: 'till', seeds: 'sow', carrotSeed: 'sow', can: 'water', hand: 'harvest', fence: 'till' };
 
 // Why a tool is refused, in a phrase short enough to hold on one line.
 const REASONS = {
@@ -31,7 +32,8 @@ const REASONS = {
   empty: 'Sow something first',
   'not-ready': 'Not ripe yet',
   ripened: 'Ripe already',
-  'full-water': 'Already wet',
+  hydrated: 'Already watered',
+  'no-fence': 'No fence pieces — buy some at the shop',
   'no-tool': 'Buy this tool at the shop',
   worn: 'Worn out — buy a new one at the shop',
   'no-plot': 'Tap a plot to work it',
@@ -243,6 +245,66 @@ function placeStall(furniture, shop) {
   return furniture.place('shop-stall', STALL.x, STALL.z, 0);
 }
 
+// ---------- The fences ----------
+
+/**
+ * Post-and-rail fences along every gridline of the field. One hit plane per
+ * slot exists from the start, so an empty slot is as tappable as a built one;
+ * the rebuild pass only decides which slots show a post. Fences are not solid -
+ * Market stalls block, a dropped fence post does not, because the point of the
+ * fence is that you paid for your paddock, not that it trips you up.
+ */
+function buildFenceWorld(fences) {
+  const group = new THREE.Group();
+  const fenceHits = new THREE.Group();
+
+  const postMat = new THREE.MeshStandardMaterial({
+    color: WOOD, roughness: 0.9, metalness: 0, flatShading: true,
+  });
+  const railMat = new THREE.MeshStandardMaterial({
+    color: WOOD_DARK, roughness: 1, metalness: 0, flatShading: true,
+  });
+  const postGeo = new THREE.BoxGeometry(0.1, 0.55, 0.1);
+  // Rails span junction to junction; which axis they run along is the slot's.
+  const railZ = new THREE.BoxGeometry(0.05, 0.07, PLOT_CELL + 0.02);
+  const railX = new THREE.BoxGeometry(PLOT_CELL + 0.02, 0.07, 0.05);
+
+  const slotMat = new THREE.MeshBasicMaterial({
+    transparent: true, opacity: 0, depthWrite: false, side: THREE.DoubleSide,
+  });
+  const slotGeo = new THREE.PlaneGeometry(0.9, 0.9);
+
+  forEachSlot((slot) => {
+    const mid = slotMid(slot.a, slot.l, slot.s);
+    const hit = new THREE.Mesh(slotGeo, slotMat);
+    hit.rotation.x = -Math.PI / 2;
+    hit.position.set(mid.x, 0.05, mid.z);
+    hit.userData.fence = true;
+    hit.userData.slot = slot;
+    fenceHits.add(hit);
+  });
+
+  function rebuild() {
+    while (group.children.length) group.remove(group.children[0]);
+    for (const slot of fences.values()) {
+      const mid = slotMid(slot.a, slot.l, slot.s);
+      const post = new THREE.Mesh(postGeo, postMat);
+      post.position.set(mid.x, 0.275, mid.z);
+      post.castShadow = true;
+      group.add(post);
+      for (const y of [0.36, 0.5]) {
+        const rail = new THREE.Mesh(slot.a === 0 ? railZ : railX, railMat);
+        rail.position.set(mid.x, y, mid.z);
+        rail.castShadow = true;
+        group.add(rail);
+      }
+    }
+  }
+  rebuild();
+
+  return { group, hits: fenceHits, rebuild };
+}
+
 // ---------- Durability helpers ----------
 
 function loadTools(saved) {
@@ -266,10 +328,11 @@ function loadTools(saved) {
  * The floating-island world. Same contract as the house world, so the shell
  * cannot tell them apart: it just swaps `active` and keeps rendering.
  *
- * Interaction is tap-first: you point at a plot with your thumb and the tool
- * you have picked on the rail is used on that plot when you are close enough.
- * No auto-selection, no standing-on-it magic - the market has prices, the
- * tools wear out, and the plushie works the ground it is asked to work.
+ * Interaction is gesture-first: tap one plot, or drag a stroke across a row
+ * and the tool on the rail works every plot it crosses, as long as the plushie
+ * is close enough to reach each one. No auto-selection, no standing-on-it
+ * magic - the market has prices, the tools wear out, and the plushie works the
+ * ground it is asked to work.
  */
 export function createFarmWorld({
   camera, player, sounds, actionButton, rotateButton, portal, renderer,
@@ -336,6 +399,13 @@ export function createFarmWorld({
   }
   if (!plots) plots = createField();
 
+  // Buckets of decay the player placed along the gridlines. The map is pure
+  // data; its world is the post-and-rail group below.
+  const fences = buildFences(saved && saved.fences);
+  const fenceWorld = buildFenceWorld(fences);
+  scene.add(fenceWorld.group);
+  scene.add(fenceWorld.hits);
+
   // The plot the player has tapped, or null. It may be out of reach: tapping
   // from afar selects it, tapping again (or walking up and tapping) works it.
   let sel = null;
@@ -362,12 +432,27 @@ export function createFarmWorld({
     return { hoe: wearOf('hoe'), can: wearOf('can') };
   }
 
-  // ---------- Turning taps into strokes ----------
+  // ---------- Turning taps and drags into strokes ----------
 
   renderer.domElement.style.touchAction = 'none';
   const raycaster = new THREE.Raycaster();
   const ndc = new THREE.Vector2();
-  renderer.domElement.addEventListener('pointerdown', onTap);
+
+  // Every surface a stroke can meet, plot planes and fence slots in one
+  // ray-cast pass. Nearest hit wins, so a fence slot peeking out between plot
+  // corners is never stolen by the plot beside it.
+  const strokeSurfaces = () => plants.hits.children.concat(fenceWorld.hits.children);
+
+  // A stroke begins on the first pointer down and ends on the last up. A tap
+  // is the stroke that never moved far enough to be a drag: it pins one plot
+  // and works it. A drag paints the same tool across every plot or fence slot
+  // the pointer crosses, within reach, once per cast.
+  let stroke = null;
+
+  renderer.domElement.addEventListener('pointerdown', onPress);
+  renderer.domElement.addEventListener('pointermove', onMove);
+  renderer.domElement.addEventListener('pointerup', onRelease);
+  renderer.domElement.addEventListener('pointercancel', onRelease);
 
   function ndcFrom(event) {
     const el = renderer.domElement;
@@ -376,53 +461,234 @@ export function createFarmWorld({
     ndc.y = -(((event.clientY - rect.top) / rect.height) * 2 - 1);
   }
 
-  function onTap(event) {
+  // A down-up with no meaningful motion is a tap; anything else is a paint
+  // sweep. The boundary is big enough that a wobbly finger still counts as a
+  // tap, but small enough that an intended drag cannot stub into one.
+  const DRAG_START = 0.02; // in NDC units, ~1.5% of the screen width
+
+  function onPress(event) {
     if (!entered) return;
     if (event.pointerType === 'mouse' && event.button !== 0) return;
     if (!event.isPrimary) return;
 
     ndcFrom(event);
-    raycaster.setFromCamera(ndc, camera);
-    const hit = raycaster.intersectObjects(plants.hits.children, false)[0];
-    const plot = hit && hit.object.userData.plot;
+    event.preventDefault();
+    renderer.domElement.setPointerCapture(event.pointerId);
 
-    if (plot) selectPlot(plot);
-    else if (sel) {
-      // Tapping open ground is the way to let go of a distant selection.
+    // A carried piece pins the hands: a press may mark a plot as the goal to
+    // set the haul down on, but nothing gets worked and no sweeps start.
+    if (furniture.carried) {
+      const hit = pickAt(ndc);
+      sel = hit && hit.kind === 'plot' ? hit.plot : null;
+      paint(true);
+      return;
+    }
+
+    // The stroke uses its own wear budget, cloned from what the plushie has
+    // right now, so a can that dies mid-sweep stalls the sweep instead of
+    // letting one lucky drag water fifty plots on a single charge. What was
+    // spent is written back to the real tools only when the gesture ends.
+    stroke = {
+      pointerId: event.pointerId,
+      tool,
+      tools: { hoe: tools.hoe, can: tools.can },
+      start: { x: ndc.x, y: ndc.y },
+      touched: new Set(),
+      moved: false,
+      didWork: false,
+      refused: false,
+    };
+  }
+
+  function onMove(event) {
+    if (!stroke || event.pointerId !== stroke.pointerId) return;
+    ndcFrom(event);
+    const dx = ndc.x - stroke.start.x;
+    const dy = ndc.y - stroke.start.y;
+    if (dx * dx + dy * dy < DRAG_START * DRAG_START) return;
+    stroke.moved = true;
+    sweepTo(ndc);
+  }
+
+  function onRelease(event) {
+    if (!stroke || event.pointerId !== stroke.pointerId) return;
+    if (renderer.domElement.hasPointerCapture(event.pointerId)) {
+      renderer.domElement.releasePointerCapture(event.pointerId);
+    }
+    const gesture = stroke;
+    stroke = null;
+    // Both branches spend from the clone; settle the real tools once, no
+    // matter which one the gesture turned out to be.
+    tools.hoe = gesture.tools.hoe;
+    tools.can = gesture.tools.can;
+    if (gesture.moved) finishStroke(gesture);
+    else resolveTap(gesture);
+  }
+
+  function finishStroke(gesture) {
+    if (!entered) return;
+    if (gesture.didWork) {
+      plants.refresh();
+      saveNow();
+    }
+    paint(true);
+  }
+
+  /** A tap: pick the nearest surface and act on it, exactly like a press. */
+  function resolveTap(gesture) {
+    if (!entered) return;
+    const hit = pickAt(gesture.start);
+    if (!hit) {
+      // Open ground is the way to let go of a distant selection.
       sel = null;
       paint(true);
+      return;
     }
+    if (hit.kind === 'fence') {
+      if (gesture.tool === 'fence') actFence(hit.slot);
+      else sel = null;
+      paint(true);
+      saveNow();
+      return;
+    }
+    if (gesture.tool === 'fence') {
+      sel = null;
+      paint(true);
+      return;
+    }
+    selectPlot(hit.plot, gesture.tools);
+  }
+
+  function sweepTo(value) {
+    const hit = pickAt(value);
+    if (!hit) return;
+    if (hit.kind === 'fence') touchFence(hit.slot);
+    else if (stroke.tool !== 'fence') touchPlot(hit.plot);
+  }
+
+  function pickAt(p) {
+    ndc.x = p.x;
+    ndc.y = p.y;
+    raycaster.setFromCamera(ndc, camera);
+    const all = raycaster.intersectObjects(strokeSurfaces(), false);
+    const closest = all[0];
+    if (!closest) return null;
+    if (closest.object.userData.fence) {
+      return { kind: 'fence', slot: closest.object.userData.slot };
+    }
+    if (closest.object.userData.plot) {
+      return { kind: 'plot', plot: closest.object.userData.plot };
+    }
+    return null;
+  }
+
+  function touchPlot(plot) {
+    const key = 'p' + plot.key;
+    if (stroke.touched.has(key)) return;
+    stroke.touched.add(key);
+    if (!plotWithinReach(plot, player.position.x, player.position.z)) return;
+    if (!applyTool(plot, stroke.tool, inventory, stroke.tools)) {
+      if (!stroke.refused) {
+        stroke.refused = true;
+        hud.warn();
+      }
+      return;
+    }
+    if (!stroke.didWork) {
+      stroke.didWork = true;
+      sounds.play(SOUNDS[stroke.tool]);
+    }
+    plants.refresh();
+    paint(true);
+  }
+
+  function touchFence(slot) {
+    const key = 'f' + slotKey(slot.a, slot.l, slot.s);
+    if (stroke.touched.has(key)) return;
+    stroke.touched.add(key);
+    actFenceStrength(slot, true);
+  }
+
+  /** Shared fence work; `quiet` is the stroke path, passing refusals silently. */
+  function actFenceStrength(slot, quiet) {
+    const mid = slotMid(slot.a, slot.l, slot.s);
+    const dx = player.position.x - mid.x;
+    const dz = player.position.z - mid.z;
+    if (dx * dx + dz * dz > REACH * REACH) {
+      if (!quiet) hud.warn();
+      return;
+    }
+    const key = slotKey(slot.a, slot.l, slot.s);
+    let changed = false;
+    if (fences.has(key)) {
+      // Tearing a fence down earns nothing back: the pieces are spent on the
+      // land and stay with the land.
+      fences.delete(key);
+      changed = true;
+    } else if (inventory.spend('fence', 1)) {
+      fences.set(key, { a: slot.a, l: slot.l, s: slot.s });
+      changed = true;
+    } else if (!quiet && (!stroke || !stroke.refused)) {
+      // A real tap complains loudly; a sweep complains once per gesture so a
+      // long empty row does not machine-gun the same refusal.
+      if (stroke) stroke.refused = true;
+      hud.warn();
+      return;
+    }
+    if (!changed) return;
+    fenceWorld.rebuild();
+    if (!quiet) {
+      sounds.play(SOUNDS.fence);
+      return;
+    }
+    if (!stroke.didWork) {
+      stroke.didWork = true;
+      sounds.play(SOUNDS.fence);
+    }
+  }
+
+  /** A direct tap on a fence slot (quiet=false): preserves tap behaviour. */
+  function actFence(slot) {
+    actFenceStrength(slot, false);
   }
 
   /**
    * Mark the tapped plot. Within reach, act immediately - the tap *is* the
    * stroke. Further away, the glow stays put as the goal to walk to.
    */
-  function selectPlot(plot) {
+  function selectPlot(plot, bag) {
+    if (tool === 'fence') {
+      sel = null;
+      paint(true);
+      return;
+    }
     sel = plot;
     plants.setTarget(sel);
     // A carried piece pins the hands: tapping plots while holding something
     // marks the plot but never works it (the button would drop the haul).
+    // onPress already steers carried presses away, but close the door anyway.
     if (furniture.carried) {
       paint(true);
       return;
     }
     if (plotWithinReach(sel, player.position.x, player.position.z)) {
-      actOn(sel);
+      actOn(sel, bag);
     } else {
       paint(true);
     }
   }
 
-  function actOn(plot) {
-    const verdict = canUse(plot, tool, inventory, tools);
-    if (!verdict.ok) {
+  function applyTool(plot, t, inv, bag) {
+    return useTool(plot, t, inv, bag).ok;
+  }
+
+  function actOn(plot, bag = tools) {
+    if (!applyTool(plot, tool, inventory, bag)) {
       hud.warn();
       paint(true);
       return;
     }
     sounds.play(SOUNDS[tool]);
-    useTool(plot, tool, inventory, tools);
     plants.refresh();
     paint(true);
     saveNow();
@@ -436,6 +702,7 @@ export function createFarmWorld({
       plots: serialiseField(plots),
       tool,
       tools,
+      fences: Array.from(fences.values()),
     });
   }
   window.addEventListener('pagehide', saveNow);
@@ -463,8 +730,11 @@ export function createFarmWorld({
     if (!btn) return;
     const id = btn.dataset.buy;
     if (id === 'seed') buySeed();
+    else if (id === 'carrotSeed') buyCarrotSeed();
     else if (id === 'hoe' || id === 'can') buyTool(id);
-    else if (id === 'sell') sellAllWheat();
+    else if (id === 'fence') buyFence();
+    else if (id === 'sellWheat') sellAllWheat();
+    else if (id === 'sellCarrot') sellAllCarrot();
   });
   document.addEventListener('keydown', (event) => {
     if (event.key === 'Escape' && shopOpen) closeShop();
@@ -497,6 +767,24 @@ export function createFarmWorld({
     afterTrade();
   }
 
+  function buyCarrotSeed() {
+    if (!inventory.spend('coins', PRICES.carrotSeed)) {
+      hud.warn();
+      return;
+    }
+    inventory.give('carrotSeed', 1);
+    afterTrade();
+  }
+
+  function buyFence() {
+    if (!inventory.spend('coins', PRICES.fence)) {
+      hud.warn();
+      return;
+    }
+    inventory.give('fence', 1);
+    afterTrade();
+  }
+
   function buyTool(id) {
     // Already own a working one: nothing to spend on.
     if (typeof tools[id] === 'number' && tools[id] > 0) return;
@@ -516,6 +804,14 @@ export function createFarmWorld({
     afterTrade();
   }
 
+  function sellAllCarrot() {
+    const n = inventory.carrot;
+    if (n <= 0) return;
+    inventory.spend('carrot', n);
+    inventory.give('coins', n * SELL_PRICE.carrot);
+    afterTrade();
+  }
+
   function shopRow({ id, name, icon, meta, action, disabled }) {
     return (
       '<div class="shop-row">' +
@@ -528,22 +824,37 @@ export function createFarmWorld({
     );
   }
 
+  function shopBlock(title, rows) {
+    return '<div class="shop-group">' + title + '</div>' + rows.join('');
+  }
+
   function renderShop() {
-    const rows = [];
+    const blocks = [];
 
-    rows.push(shopRow({
-      id: 'seed',
-      name: 'Wheat seeds',
-      icon: TOOL_DEFS.seeds.icon,
-      meta: 'Sows one plot of wheat',
-      action: PRICES.seed + ' coins',
-      disabled: inventory.coins < PRICES.seed,
-    }));
+    blocks.push(shopBlock('Seeds', [
+      shopRow({
+        id: 'seed',
+        name: 'Wheat seeds',
+        icon: TOOL_DEFS.seeds.icon,
+        meta: 'Sows one plot of wheat',
+        action: PRICES.seed + ' coins',
+        disabled: inventory.coins < PRICES.seed,
+      }),
+      shopRow({
+        id: 'carrotSeed',
+        name: 'Carrot seeds',
+        icon: TOOL_DEFS.carrotSeed.icon,
+        meta: 'Sows one plot of carrots',
+        action: PRICES.carrotSeed + ' coins',
+        disabled: inventory.coins < PRICES.carrotSeed,
+      }),
+    ]));
 
+    const gear = [];
     for (const id of ['hoe', 'can']) {
       const owned = typeof tools[id] === 'number';
       const working = owned && tools[id] > 0;
-      rows.push(shopRow({
+      gear.push(shopRow({
         id,
         name: TOOL_DEFS[id].label,
         icon: TOOL_DEFS[id].icon,
@@ -554,18 +865,41 @@ export function createFarmWorld({
         disabled: working,
       }));
     }
+    blocks.push(shopBlock('Gear', gear));
+
+    blocks.push(shopBlock('Build', [
+      shopRow({
+        id: 'fence',
+        name: 'Fence post',
+        icon: TOOL_DEFS.fence.icon,
+        meta: 'One piece; tap a gap between plots to build',
+        action: PRICES.fence + ' coins',
+        disabled: inventory.coins < PRICES.fence,
+      }),
+    ]));
 
     const wheat = inventory.wheat;
-    rows.push(shopRow({
-      id: 'sell',
-      name: 'Sell all wheat',
-      icon: WHEAT_ICON,
-      meta: SELL_PRICE.wheat + ' coin per bag',
-      action: wheat > 0 ? 'Sell ' + wheat + ' = ' + wheat * SELL_PRICE.wheat : 'Nothing to sell',
-      disabled: wheat <= 0,
-    }));
+    const carrot = inventory.carrot;
+    blocks.push(shopBlock('Sell', [
+      shopRow({
+        id: 'sellWheat',
+        name: 'Sell all wheat',
+        icon: WHEAT_ICON,
+        meta: SELL_PRICE.wheat + ' coin per bag',
+        action: wheat > 0 ? 'Sell ' + wheat + ' = ' + wheat * SELL_PRICE.wheat : 'Nothing to sell',
+        disabled: wheat <= 0,
+      }),
+      shopRow({
+        id: 'sellCarrot',
+        name: 'Sell all carrots',
+        icon: TOOL_DEFS.carrotSeed.icon,
+        meta: SELL_PRICE.carrot + ' coins per bunch',
+        action: carrot > 0 ? 'Sell ' + carrot + ' = ' + carrot * SELL_PRICE.carrot : 'Nothing to sell',
+        disabled: carrot <= 0,
+      }),
+    ]));
 
-    shopList.innerHTML = rows.join('');
+    shopList.innerHTML = blocks.join('');
   }
 
   // ---------- Per-frame scratch ----------
@@ -590,6 +924,7 @@ export function createFarmWorld({
     let hint = '';
     let glyph = null;
     let ready = null;
+    const counts = inventory.snapshot();
 
     if (carried) {
       enabled = true;
@@ -601,7 +936,11 @@ export function createFarmWorld({
       hint = isStall ? 'Open the shop' : 'Step through';
       glyph = isStall ? SHOP_ICON : GO_ICON;
     } else if (sel) {
-      if (plotWithinReach(sel, player.position.x, player.position.z)) {
+      if (tool === 'fence') {
+        // Fence mode never keeps a selection; this only holds for the frame
+        // between picking the fence and the first tap.
+        hint = 'Tap a gap between plots to build';
+      } else if (plotWithinReach(sel, player.position.x, player.position.z)) {
         const verdict = canUse(sel, tool, inventory, tools);
         if (verdict.ok) {
           enabled = true;
@@ -615,6 +954,8 @@ export function createFarmWorld({
       } else {
         hint = 'Walk to the selected plot';
       }
+    } else if (tool === 'fence' && (counts.fence || 0) <= 0) {
+      hint = REASONS['no-fence'];
     } else {
       hint = 'Tap a plot to work it';
     }
@@ -627,7 +968,7 @@ export function createFarmWorld({
       enabled,
       hint,
       wear: wearMap(),
-      counts: inventory.snapshot(),
+      counts,
     });
   }
 

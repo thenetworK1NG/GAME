@@ -438,14 +438,17 @@
      button uses - opacity plus pointer-events - so none of it ever flashes
      while walking indoors. Shown together by js/farm/hud.js. */
 
-  /* Wallet: two chips in the top-left, seeds you can spend and wheat you have
-     banked. The clue to the whole loop lives in that pair of numbers. */
+  /* Wallet: chips along the top-left for what you can spend and what you have
+     banked - coins, both seed bags, and both crops. The clue to the whole loop
+     lives in that row of numbers. */
   #wallet {
     position: fixed;
     top: max(12px, calc(env(safe-area-inset-top, 0px) + 10px));
     left: max(12px, calc(var(--safe-left) + 12px));
     display: flex;
+    flex-wrap: wrap;
     gap: 8px;
+    max-width: min(340px, calc(100vw - 24px));
     z-index: 16;
     opacity: 0;
     transform: translateY(-8px);
@@ -475,12 +478,17 @@
   #wallet .chip svg { width: 16px; height: 16px; flex: none; }
   #wallet .chip b { font-weight: 650; font-variant-numeric: tabular-nums; }
   #wallet .chip.coins svg { color: #ffd77a; }
+  #wallet .chip.wheat svg { color: #d9ac45; }
+  #wallet .chip.carrot svg { color: #f0965a; }
+  #wallet .chip.seeds svg,
+  #wallet .chip.carrotSeed svg { color: #9ac46a; }
   #wallet.empty .chip { opacity: 0.45; }
 
-  /* Tool rail: the four moves of the loop, docked into one glass tube above
+  /* Tool rail: the six moves of the loop, docked into one glass tube above
      the action button. Both live under the right thumb, the hand that presses
      Action, so a tool swap is a nudge instead of a reach across the screen;
-     the left thumb stays parked on the stick. */
+     the left thumb stays parked on the stick. Two columns keep the extra
+     (the fence builder) from turning the dock into a ladder. */
   #tool-rail {
     position: fixed;
     right: max(12px, calc(var(--safe-right) + 12px));
@@ -488,8 +496,8 @@
     /* Ride on top of the action button, the same clearance the rotate button
        uses so the two swap cleanly when a carry starts. */
     margin-bottom: calc(min(var(--action-size), 26vw) + 14px);
-    display: flex;
-    flex-direction: column;
+    display: grid;
+    grid-template-columns: repeat(2, 50px);
     gap: 6px;
     padding: 8px;
     border-radius: 18px;
@@ -581,6 +589,33 @@
   }
 
   #tool-rail .tool.worn .wear { background: rgba(255, 120, 105, 0.8); }
+
+  /* Nearly spent: on a tool, its last quarter of life; on the fence builder,
+     zero pieces left in the purse (build mode still works, it just gets told
+     off). One amber tint for both. */
+  #tool-rail .tool.low {
+    color: #ffd9a0;
+    border-color: rgba(255, 200, 90, 0.6);
+    box-shadow: inset 0 0 12px rgba(255, 180, 60, 0.18);
+  }
+
+  /* The fence builder's counter: how many posts are waiting to be placed. */
+  #tool-rail .tool .badge {
+    position: absolute;
+    top: -4px;
+    right: -4px;
+    min-width: 18px;
+    height: 18px;
+    padding: 0 5px;
+    border-radius: 999px;
+    background: rgba(255, 200, 90, 0.95);
+    color: #2a2016;
+    font-size: 11px;
+    font-weight: 700;
+    line-height: 18px;
+    text-align: center;
+    pointer-events: none;
+  }
 
   /* Not owned yet (a watering can you have not bought): dimmed and barred. */
   #tool-rail .tool.locked {
@@ -802,6 +837,15 @@
     display: grid;
     gap: 10px;
     padding: 14px;
+  }
+
+  .shop-group {
+    padding: 8px 12px 0;
+    font-size: 11.5px;
+    font-weight: 700;
+    letter-spacing: 1.2px;
+    text-transform: uppercase;
+    color: rgba(255, 255, 255, 0.4);
   }
 
   .shop-row {
@@ -1042,9 +1086,9 @@
 
   <!-- Farm HUD (js/farm/hud.js). Hidden on the house; shown on the farm.
 
-       The wallet is the whole economy in two numbers: what you can sow, and
-       what you have banked. The tool rail buttons are injected from TOOLS in
-       js/farm/items.js. -->
+       The wallet is the whole economy in five numbers: coins, both seed bags,
+       and both harvests. The tool rail buttons are injected from TOOLS (plus
+       the separate fence builder) in js/farm/items.js. -->
   <div id="wallet" aria-hidden="true">
     <div class="chip coins">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
@@ -1064,6 +1108,15 @@
       </svg>
       <b id="wallet-seeds">0</b>
     </div>
+    <div class="chip carrotSeed">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+           stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <path d="M12 8.5c-3 1.8-5.5 4.6-5.5 7.4a5.5 5.5 0 0 0 11 0c0-2.8-2.5-5.6-5.5-7.4Z" />
+        <path d="M12 8.5v-4" />
+        <path d="M9.2 4.5h5.6" />
+      </svg>
+      <b id="wallet-carrotSeed">0</b>
+    </div>
     <div class="chip wheat">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
            stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
@@ -1072,6 +1125,15 @@
         <path d="M12 16c-3.3 0-6-2.4-6-5.6 3.3 0 6 2.4 6 5.6Z" />
       </svg>
       <b id="wallet-wheat">0</b>
+    </div>
+    <div class="chip carrot">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+           stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <path d="M12 8.5c-3 1.8-5.5 4.6-5.5 7.4a5.5 5.5 0 0 0 11 0c0-2.8-2.5-5.6-5.5-7.4Z" />
+        <path d="M12 8.5v-4" />
+        <path d="M9.2 4.5h5.6" />
+      </svg>
+      <b id="wallet-carrot">0</b>
     </div>
   </div>
 
@@ -1097,7 +1159,7 @@
         <button id="shop-close" type="button" aria-label="Close">&times;</button>
       </div>
       <!-- Rows are built by the farm world from the catalogue in js/farm/items.js. -->
-      <div class="shop-balance">Buy seeds and tools, or sell the wheat you bring back.</div>
+      <div class="shop-balance">Buy seeds, tools and fence posts, or sell what you bring back. Tools wear out and are replaced here.</div>
       <div id="shop-list"></div>
     </div>
   </div>

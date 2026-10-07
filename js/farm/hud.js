@@ -43,7 +43,9 @@ export function createHud({ onPick = () => {} } = {}) {
   const rail = need('tool-rail');
   const wallet = need('wallet');
   const seedsEl = need('wallet-seeds');
+  const carrotSeedEl = need('wallet-carrotSeed');
   const wheatEl = need('wallet-wheat');
+  const carrotEl = need('wallet-carrot');
   const coinsEl = need('wallet-coins');
   const hint = need('tool-hint');
   const glyphEl = need('action-glyph');
@@ -72,6 +74,24 @@ export function createHud({ onPick = () => {} } = {}) {
     buttons.set(id, btn);
   }
 
+  // The fence is a mode, not a worn tool, so it is not in TOOLS: it gets its
+  // own button on the end of the rail, carrying a badge with however many
+  // pieces are in the purse. Zero pieces still enters the mode - the tap just
+  // gets refused with a nudge toward the shop.
+  const fenceBtn = document.createElement('button');
+  fenceBtn.type = 'button';
+  fenceBtn.className = 'tool fence-tool';
+  fenceBtn.dataset.tool = 'fence';
+  fenceBtn.setAttribute('aria-label', TOOL_DEFS.fence.label);
+  fenceBtn.innerHTML = TOOL_DEFS.fence.icon;
+  const badge = document.createElement('span');
+  badge.className = 'badge';
+  badge.hidden = true;
+  fenceBtn.appendChild(badge);
+  fenceBtn.addEventListener('click', () => onPick('fence'));
+  rail.appendChild(fenceBtn);
+  buttons.set('fence', fenceBtn);
+
   let visible = false;
 
   // Last-painted state, so paint() never touches the DOM twice in a row.
@@ -79,8 +99,8 @@ export function createHud({ onPick = () => {} } = {}) {
   // owned", so the locked/owned toggle runs on the very first paint.
   const last = {
     tool: null, glyph: null, ready: null, enabled: null,
-    hint: null, seeds: null, wheat: null, coins: null,
-    walletEmpty: null, carried: null,
+    hint: null, seeds: null, carrotSeed: null, wheat: null, carrot: null,
+    coins: null, fence: null, walletEmpty: null, carried: null,
   };
   const lastWear = { hoe: undefined, can: undefined };
 
@@ -133,22 +153,48 @@ export function createHud({ onPick = () => {} } = {}) {
       hint.textContent = hintText;
     }
 
-    const seeds = state.counts && state.counts.seeds;
-    const wheat = state.counts && state.counts.wheat;
-    const coins = state.counts && state.counts.coins;
+    const counts = state.counts || {};
+    const seeds = counts.seeds;
     if (seeds !== last.seeds) {
       last.seeds = seeds;
       seedsEl.textContent = String(seeds ?? 0);
     }
+    const carrotSeed = counts.carrotSeed;
+    if (carrotSeed !== last.carrotSeed) {
+      last.carrotSeed = carrotSeed;
+      carrotSeedEl.textContent = String(carrotSeed ?? 0);
+    }
+    const wheat = counts.wheat;
     if (wheat !== last.wheat) {
       last.wheat = wheat;
       wheatEl.textContent = String(wheat ?? 0);
     }
+    const carrot = counts.carrot;
+    if (carrot !== last.carrot) {
+      last.carrot = carrot;
+      carrotEl.textContent = String(carrot ?? 0);
+    }
+    const coins = counts.coins;
     if (coins !== last.coins) {
       last.coins = coins;
       coinsEl.textContent = String(coins ?? 0);
     }
-    const walletEmpty = (seeds ?? 0) === 0 && (wheat ?? 0) === 0 && (coins ?? 0) === 0;
+
+    const fence = counts.fence;
+    if (fence !== last.fence) {
+      last.fence = fence;
+      const n = fence ?? 0;
+      badge.textContent = String(n);
+      badge.hidden = n === 0;
+      // Zero pieces glows amber rather than red: tapping the fence still works,
+      // it just gets told off until there is something to build with.
+      fenceBtn.classList.toggle('low', n === 0);
+    }
+
+    const walletEmpty =
+      (seeds ?? 0) === 0 && (carrotSeed ?? 0) === 0 &&
+      (wheat ?? 0) === 0 && (carrot ?? 0) === 0 &&
+      (coins ?? 0) === 0 && (fence ?? 0) === 0;
     if (walletEmpty !== last.walletEmpty) {
       last.walletEmpty = walletEmpty;
       wallet.classList.toggle('empty', walletEmpty);
@@ -156,7 +202,9 @@ export function createHud({ onPick = () => {} } = {}) {
 
     // Wear: a bar under the durable tools. `null` means the tool has never been
     // bought, so the button looks locked; a number is the fraction of its life
-    // left, so a broken tool shows an empty bar and a nervous tint.
+    // left. Below a quarter the bar turns amber to hint that the shop trip is
+    // coming; at zero it is red: the tool is done and the ring must be paid for
+    // before it works again.
     const wear = state.wear || {};
     for (const [id, el] of wearEls) {
       const w = wear[id]; // null | 0..1
@@ -165,6 +213,7 @@ export function createHud({ onPick = () => {} } = {}) {
       const held = w !== null && w !== undefined;
       buttons.get(id).classList.toggle('locked', !held);
       buttons.get(id).setAttribute('aria-disabled', held ? 'false' : 'true');
+      buttons.get(id).classList.toggle('low', held && w > 0 && w <= 0.25);
       buttons.get(id).classList.toggle('worn', held && w <= 0);
       if (held) {
         const frac = Math.max(0, Math.min(1, w));

@@ -5,10 +5,16 @@
  * The plot is a plain data record and every mutation goes through `useTool`,
  * so the world, the HUD and the probe all drive the same transitions. Nothing
  * in here knows about meshes - `plants.js` reads the records and draws them.
+ *
+ * The states follow Minecraft's tilling loop: dirt, walked over by a hoe,
+ * becomes farmland; farmland that is watering-can'd becomes hydrated farmland
+ * and grows crops twice as fast. Harvest returns the crop's own seed, the
+ * farmland keeps its hydration, and only empty, un-hydrated farmland can dry
+ * back to dirt again.
  */
 
 import {
-  WATER_TIME, catchUp, growthStep, isReady, CROPS,
+  DIRT_SECONDS, catchUp, growthStep, isReady, CROPS,
 } from './items.js';
 
 export const PLOT_COUNT = 6;
@@ -38,25 +44,14 @@ export function createField() {
   const plots = [];
   for (let j = 0; j < PLOT_COUNT; j++) {
     for (let i = 0; i < PLOT_COUNT; i++) {
-      plots.push({ key: i + j * PLOT_COUNT, i, j, tilled: false, crop: null, growth: 0, water: 0 });
+      plots.push({
+        key: i + j * PLOT_COUNT, i, j,
+        tilled: false, hydrated: false, dry: 0,
+        crop: null, growth: 0,
+      });
     }
   }
   return plots;
-}
-
-/** The nearest plot whose centre is within `reach` of a world position. */
-export function plotInReach(plots, x, z, reach = REACH) {
-  let best = null;
-  let bestD = reach * reach;
-  for (const plot of plots) {
-    const c = plotCenter(plot);
-    const d = (c.x - x) * (c.x - x) + (c.z - z) * (c.z - z);
-    if (d <= bestD) {
-      best = plot;
-      bestD = d;
-    }
-  }
-  return best;
 }
 
 /** Whether one particular plot is close enough to work. */
@@ -79,17 +74,16 @@ export function restoreField(saved, elapsed = 0) {
     const src = saved[n] || {};
     const plot = plots[n];
     plot.tilled = src.t === 1 || src.t === true;
+    plot.hydrated = src.h === 1 || src.h === true;
+    plot.dry = Number.isFinite(src.d) ? Math.max(0, src.d) : 0;
     plot.crop = CROPS[src.c] ? src.c : null;
     plot.growth = Number.isFinite(src.g) ? Math.min(1, Math.max(0, src.g)) : 0;
-    plot.water = Number.isFinite(src.w) ? Math.max(0, src.w) : 0;
 
     if (plot.crop) {
-      const next = catchUp(plot.growth, plot.water, elapsed);
-      plot.growth = next.growth;
-      plot.water = next.water;
+      plot.growth = catchUp(plot.growth, plot.hydrated, elapsed, CROPS[plot.crop].grow);
     } else {
       plot.growth = 0;
-      plot.water = 0;
+      plot.dry = 0;
     }
   }
   return plots;
@@ -97,7 +91,18 @@ export function restoreField(saved, elapsed = 0) {
 
 /** Compact form for the save file: one short key per field, fixed order. */
 export function serialiseField(plots) {
-  return plots.map((p) => ({ t: p.tilled ? 1 : 0, c: p.crop, g: p.growth, w: p.water }));
+  return plots.map((p) => ({
+    t: p.tilled ? 1 : 0,
+    h: p.hydrated ? 1 : 0,
+    d: p.dry,
+    c: p.crop,
+    g: p.growth,
+  }));
+}
+
+/** The crop a seed tool would sow, if the tool is one of the two seed bags. */
+function seedCrop(tool) {
+  return tool === 'seeds' ? CROPS.wheat : tool === 'carrotSeed' ? CROPS.carrot : null;
 }
 
 /**
@@ -120,19 +125,19 @@ export function canUse(plot, tool, inventory, tools = {}) {
     return { ok: true, reason: 'till' };
   }
 
-  if (tool === 'seeds') {
+  const crop = seedCrop(tool);
+  if (crop) {
     if (!plot.tilled) return { ok: false, reason: 'not-tilled' };
     if (plot.crop) return { ok: false, reason: 'has-crop' };
-    if (!inventory.has('seeds', CROPS.wheat.seedCost)) {
+    if (!inventory.has(crop.seedKind, crop.seedCost)) {
       return { ok: false, reason: 'no-seeds' };
     }
     return { ok: true, reason: 'sow' };
   }
 
   if (tool === 'can') {
-    if (!plot.crop) return { ok: false, reason: 'empty' };
-    if (isReady(plot.growth)) return { ok: false, reason: 'ripened' };
-    if (plot.water >= WATER_TIME) return { ok: false, reason: 'full-water' };
+    if (!plot.tilled) return { ok: false, reason: 'not-tilled' };
+    if (plot.hydrated) return { ok: false, reason: 'hydrated' };
     if (tools.can == null) return { ok: false, reason: 'no-tool' };
     if (tools.can <= 0) return { ok: false, reason: 'worn' };
     return { ok: true, reason: 'water' };
@@ -151,12 +156,11 @@ export function canUse(plot, tool, inventory, tools = {}) {
  * Performs the action. Returns the same shape `canUse` does, so a caller can
  * check first and act second without the two drifting apart.
  *
- * Success wears the hoe and the can by one action; the seed and the hand do
+ * Success wears the hoe and the can by one action; the seeds and the hand do
  * not wear. The refusal path never decrements.
  *
- * Harvest keeps the plot tilled. Ground you have already broken is not
- * something you should have to break again, and clearing it back to grass
- * would make the field a chore to walk across between seasons.
+ * Harvest returns the crop and its own seed, and leaves the farmland broken
+ * and hydrated exactly as it was - a tended plot cycles without new work.
  */
 export function useTool(plot, tool, inventory, tools = {}) {
   const verdict = canUse(plot, tool, inventory, tools);
@@ -164,32 +168,35 @@ export function useTool(plot, tool, inventory, tools = {}) {
 
   if (tool === 'hoe') {
     plot.tilled = true;
+    plot.dry = 0;
     tools.hoe -= 1;
     return verdict;
   }
 
-  if (tool === 'seeds') {
-    if (!inventory.spend('seeds', CROPS.wheat.seedCost)) {
+  const crop = seedCrop(tool);
+  if (crop) {
+    if (!inventory.spend(crop.seedKind, crop.seedCost)) {
       return { ok: false, reason: 'no-seeds' };
     }
-    plot.crop = 'wheat';
+    plot.crop = crop.id;
     plot.growth = 0;
-    plot.water = 0;
+    plot.dry = 0;
     return verdict;
   }
 
   if (tool === 'can') {
-    plot.water = WATER_TIME;
+    plot.hydrated = true;
+    plot.dry = 0;
     tools.can -= 1;
     return verdict;
   }
 
   if (tool === 'hand') {
-    const crop = CROPS[plot.crop];
-    for (const [kind, n] of Object.entries(crop.yield)) inventory.give(kind, n);
+    const cropDef = CROPS[plot.crop];
+    for (const [kind, n] of Object.entries(cropDef.yield)) inventory.give(kind, n);
     plot.crop = null;
     plot.growth = 0;
-    plot.water = 0;
+    plot.dry = 0;
     return verdict;
   }
 
@@ -203,13 +210,24 @@ export function useTool(plot, tool, inventory, tools = {}) {
  */
 export function tickField(plots, dt) {
   for (const plot of plots) {
-    if (!plot.crop || plot.growth >= 1) {
-      // Water still drains on a ripe plot so the number is honest when the
-      // next seed goes in.
-      if (plot.water > 0) plot.water = Math.max(0, plot.water - dt);
+    if (plot.crop) {
+      plot.dry = 0;
+      if (!isReady(plot.growth)) {
+        plot.growth = Math.min(1, plot.growth + growthStep(dt, plot.hydrated, CROPS[plot.crop].grow));
+      }
       continue;
     }
-    plot.growth = Math.min(1, plot.growth + growthStep(dt, plot.water));
-    if (plot.water > 0) plot.water = Math.max(0, plot.water - dt);
+    // Empty farmland drifts back to dirt unless it stays hydrated. A crop in
+    // hand (or under it) keeps the ground kept.
+    if (plot.tilled && !plot.hydrated) {
+      plot.dry += dt;
+      if (plot.dry >= DIRT_SECONDS) {
+        plot.tilled = false;
+        plot.hydrated = false;
+        plot.dry = 0;
+      }
+    } else {
+      plot.dry = 0;
+    }
   }
 }

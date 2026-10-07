@@ -1,12 +1,19 @@
 /**
- * The plushie's purse: seeds to sow, wheat to sell, and the coins the selling
- * brings in. Three numbers, and every transaction between them goes through
- * `spend` and `give`, so "did you actually have it?" lives in one place.
+ * The plushie's purse: seeds to sow, crops to sell, fence posts to build with,
+ * and the coins the selling brings in. Every transaction goes through `spend`
+ * and `give`, so "did you actually have it?" lives in one place.
  */
 
-export const KINDS = ['seeds', 'wheat', 'coins'];
+export const KINDS = ['seeds', 'carrotSeed', 'wheat', 'carrot', 'fence', 'coins'];
 
-export const STARTING = { seeds: 5, wheat: 0, coins: 30 };
+export const STARTING = {
+  seeds: 5,
+  carrotSeed: 0,
+  wheat: 0,
+  carrot: 0,
+  fence: 0,
+  coins: 30,
+};
 
 function normalise(data) {
   const out = {};
@@ -24,7 +31,10 @@ export function createInventory(start = STARTING) {
 
   return {
     get seeds() { return counts.seeds; },
+    get carrotSeed() { return counts.carrotSeed; },
     get wheat() { return counts.wheat; },
+    get carrot() { return counts.carrot; },
+    get fence() { return counts.fence; },
     get coins() { return counts.coins; },
 
     has(kind, n = 1) {

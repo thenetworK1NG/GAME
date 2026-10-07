@@ -44,6 +44,7 @@ const PRECACHE_URLS = [
   './js/farm/island.js',
   './js/farm/items.js',
   './js/farm/inventory.js',
+  './js/farm/fences.js',
   './js/farm/save.js',
   './js/farm/plots.js',
   './js/farm/plants.js',
