@@ -189,8 +189,11 @@ export class Joystick {
  * `consumeRecenter()` so the game loop can blend it away smoothly once the
  * player walks again, rather than snapping.
  *
- * Two fingers pinch to zoom. `distance` is clamped to [min, max] and then
- * eased toward its target so the zoom never feels steppy.
+ * Two fingers pinch to zoom and twist to orbit, and the midpoint of a two
+ * finger drag pans: the pan comes out in screen pixels via `consumePan()` for
+ * the game loop to convert into world movement. A right-button drag pans the
+ * same way on desktop. `distance` is clamped to [min, max] and then eased
+ * toward its target so the zoom never feels steppy.
  */
 export class CameraLook {
   constructor(stage, { min = 4.5, max = 17, sensitivity = 0.006, suppressDrag = null } = {}) {
@@ -213,6 +216,11 @@ export class CameraLook {
     this._lastY = 0;
     this._activeId = null;
     this._pinching = false;
+    this._panMode = false;
+    this._panLastCX = 0;
+    this._panLastCY = 0;
+    this.panDX = 0;
+    this.panDY = 0;
 
     this._onDown = this._onDown.bind(this);
     this._onMove = this._onMove.bind(this);
@@ -227,6 +235,9 @@ export class CameraLook {
     stage.addEventListener('wheel', this._onWheel, opts);
     // Safari pinch-to-zoom the page instead of the canvas without this.
     stage.addEventListener('gesturestart', (e) => e.preventDefault(), opts);
+    // A right-button drag pans; without this the browser hijacks the gesture
+    // to open the context menu the instant the button goes down.
+    stage.addEventListener('contextmenu', (e) => e.preventDefault(), opts);
   }
 
   _clampDistance(value) {
@@ -248,6 +259,9 @@ export class CameraLook {
       this._lastX = event.clientX;
       this._lastY = event.clientY;
       this._pinching = false;
+      // A right-button drag is the desktop gesture for panning; the game loop
+      // turns it into a world-space shift instead of an orbit.
+      this._panMode = event.pointerType === 'mouse' && event.button === 2;
     } else if (this._pointers.size === 2) {
       this._beginPinch();
     }
@@ -260,6 +274,9 @@ export class CameraLook {
     this._pinchBaseDistance = this.targetDistance;
     this._pinching = true;
     this._activeId = null;
+    this._panMode = false;
+    this._panLastCX = (a.x + b.x) / 2;
+    this._panLastCY = (a.y + b.y) / 2;
   }
 
   _onMove(event) {
@@ -283,6 +300,15 @@ export class CameraLook {
       while (turn < -Math.PI) turn += Math.PI * 2;
       this.yawOffset -= turn;
       this._pinchStartAngle = angle;
+
+      // The midpoint slide is the pan: both fingers moving together shift the
+      // view without zooming or swinging it.
+      const cx = (a.x + b.x) / 2;
+      const cy = (a.y + b.y) / 2;
+      this.panDX += cx - this._panLastCX;
+      this.panDY += cy - this._panLastCY;
+      this._panLastCX = cx;
+      this._panLastCY = cy;
       return;
     }
 
@@ -302,6 +328,14 @@ export class CameraLook {
     this._lastX = event.clientX;
     this._lastY = event.clientY;
 
+    // The right-button drag is a pan: the world follows the mouse instead of
+    // the camera orbiting around it.
+    if (this._panMode) {
+      this.panDX += dx;
+      this.panDY += dy;
+      return;
+    }
+
     // Horizontal drag orbits; a little vertical tilt is added on top so the
     // camera can be raised without a separate control.
     this.yawOffset -= dx * this.sensitivity;
@@ -311,6 +345,7 @@ export class CameraLook {
   _onUp(event) {
     if (!this._pointers.has(event.pointerId)) return;
     this._pointers.delete(event.pointerId);
+    this._panMode = false;
     if (this._pointers.size < 2) this._pinching = false;
     if (event.pointerId === this._activeId) {
       this._activeId = null;
@@ -342,6 +377,19 @@ export class CameraLook {
   update(dt) {
     this.distance += (this.targetDistance - this.distance) * (1 - Math.exp(-12 * dt));
     return this.distance;
+  }
+
+  /**
+   * Pan accumulated since the last call, in screen pixels (+x right, +y down).
+   * Always drained each frame so leftover motion can never leak onto a later
+   * gesture or a different world.
+   */
+  consumePan() {
+    const x = this.panDX;
+    const y = this.panDY;
+    this.panDX = 0;
+    this.panDY = 0;
+    return { x, y };
   }
 
   dispose() {

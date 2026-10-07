@@ -31,6 +31,11 @@ export const FIELD_CENTER = { x: 0, z: 0 };
 // standing on the field's edge reaches the near row but not the far one.
 export const REACH = 1.55;
 
+// The reach a drag sweep gets on top of the walk-and-work reach: from anywhere
+// in the field's interior a long stroke covers every plot, so you walk into
+// the middle once and then paint rows without shuffling.
+export const PAINT_REACH = 4.0;
+
 /** Centre of a plot in world space. */
 export function plotCenter(plot) {
   const half = (PLOT_COUNT - 1) / 2;

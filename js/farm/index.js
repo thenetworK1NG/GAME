@@ -6,7 +6,7 @@ import { createHud, DROP_ICON, GO_ICON } from './hud.js';
 import { createInventory } from './inventory.js';
 import {
   createField, restoreField, serialiseField, plotWithinReach, plotCenter,
-  useTool, canUse, tickField, REACH, PLOT_CELL,
+  useTool, canUse, tickField, REACH, PAINT_REACH, PLOT_CELL,
 } from './plots.js';
 import { createPlants } from './plants.js';
 import { TOOLS, TOOL_DEFS, PRICES, SELL_PRICE, DURABILITY } from './items.js';
@@ -36,7 +36,7 @@ const REASONS = {
   'no-fence': 'No fence pieces — buy some at the shop',
   'no-tool': 'Buy this tool at the shop',
   worn: 'Worn out — buy a new one at the shop',
-  'no-plot': 'Tap a plot to work it',
+  'no-plot': 'Tap to walk · two fingers to pan · drag to paint',
 };
 
 // Seconds between background autosaves, so a crash costs at most this much.
@@ -411,6 +411,10 @@ export function createFarmWorld({
   let sel = null;
   let entered = false;
 
+  // The farm moves on taps alone, so the thumb stick hides for the whole stay:
+  // it is only ever shown again when the arch is walked back through.
+  const joystickEl = need('joystick');
+
   const plants = createPlants(plots, camera);
   scene.add(plants.group);
   plants.refresh();
@@ -496,10 +500,16 @@ export function createFarmWorld({
   function onPress(event) {
     if (!entered) return;
     if (event.pointerType === 'mouse' && event.button !== 0) return;
-    if (!event.isPrimary) return;
     // A carried piece pins the hands: canvas presses neither walk nor paint -
     // the action button drops the haul.
     if (furniture.carried) return;
+    if (!event.isPrimary) {
+      // A second finger joining a live stroke hands the gesture to the camera
+      // (two-finger pan, zoom and twist); abandon the sweep so a pinch cannot
+      // keep painting plots while the view slides under it.
+      cancelStroke();
+      return;
+    }
 
     ndcFrom(event);
     event.preventDefault();
@@ -531,6 +541,23 @@ export function createFarmWorld({
     if (dx * dx + dy * dy < DRAG_START * DRAG_START) return;
     stroke.moved = true;
     sweepTo(ndc);
+  }
+
+  // Settles a stroke's wear clone and drops it without acting. Used when a
+  // second finger takes the gesture over for the camera; the plots it already
+  // touched stay touched, and the durability it spent is written back like a
+  // normal release would.
+  function cancelStroke() {
+    const gesture = stroke;
+    if (!gesture) return;
+    stroke = null;
+    holding = false;
+    holdingTouch = false;
+    if (renderer.domElement.hasPointerCapture(gesture.pointerId)) {
+      renderer.domElement.releasePointerCapture(gesture.pointerId);
+    }
+    tools.hoe = gesture.tools.hoe;
+    tools.can = gesture.tools.can;
   }
 
   function onRelease(event) {
@@ -642,7 +669,7 @@ export function createFarmWorld({
     const key = 'p' + plot.key;
     if (stroke.touched.has(key)) return;
     stroke.touched.add(key);
-    if (!plotWithinReach(plot, player.position.x, player.position.z)) return;
+    if (!plotWithinReach(plot, player.position.x, player.position.z, PAINT_REACH)) return;
     if (!applyTool(plot, stroke.tool, inventory, stroke.tools)) {
       if (!stroke.refused) {
         stroke.refused = true;
@@ -670,7 +697,7 @@ export function createFarmWorld({
     const mid = slotMid(slot.a, slot.l, slot.s);
     const dx = player.position.x - mid.x;
     const dz = player.position.z - mid.z;
-    if (dx * dx + dz * dz > REACH * REACH) {
+    if (dx * dx + dz * dz > (quiet ? PAINT_REACH : REACH) ** 2) {
       if (!quiet) hud.warn();
       return;
     }
@@ -748,21 +775,12 @@ export function createFarmWorld({
   }
 
   /**
-   * game.js hands this the joystick instead of using it directly: while a walk
-   * goal is live (and the thumbs stay off the stick) this returns a steering
-   * vector aimed at the goal, camera-relative exactly as Player.update expects.
-   * Any real stick push cancels the walk and takes over.
+   * The farm moves only by tapping, so the joystick is dead weight out here.
+   * This ignores it and steers purely toward the walk goal, camera-relative
+   * exactly as Player.update expects; stand still whenever there's no goal.
    */
   function stick(joy, cameraYaw) {
-    if (!goal || !entered) {
-      steer.set(joy.x, joy.y);
-      return steer;
-    }
-    if (Math.hypot(joy.x, joy.y) > 0.15) {
-      clearGoal();
-      steer.set(joy.x, joy.y);
-      return steer;
-    }
+    if (!goal || !entered) return steer.set(0, 0);
     const dx = goal.x - player.position.x;
     const dz = goal.z - player.position.z;
     const dist = Math.hypot(dx, dz);
@@ -1057,7 +1075,7 @@ export function createFarmWorld({
     } else if (tool === 'fence' && (counts.fence || 0) <= 0) {
       hint = REASONS['no-fence'];
     } else {
-      hint = 'Tap a plot to work it';
+      hint = 'Tap to walk · two fingers to pan · drag to paint';
     }
 
     hud.paint({
@@ -1144,9 +1162,12 @@ export function createFarmWorld({
     // reach test. Drag (or pinch-twist) still orbits, pinch zooms.
     rig: {
       overhead: {
-        yaw: 0,                                   // the arch ends up at the screen's edge
+        yaw: 0,        // the arch ends up at the screen's edge
         pitch: THREE.MathUtils.degToRad(63),
-        distance: 15,
+        // Framed in on the field so plots read ~1.6x larger than the old 15 and
+        // stay easy to tap on a phone; a two-finger pan or a pinch moves the
+        // frame around for anything that falls off screen.
+        distance: 9.5,
         center: [0, 0],
       },
     },
@@ -1160,6 +1181,7 @@ export function createFarmWorld({
       player.group.position.copy(player.position);
       scene.add(player.group);
       hud.show();
+      joystickEl.classList.add('hidden');
       sel = null;
       clearGoal();
       paint(true);
@@ -1167,6 +1189,7 @@ export function createFarmWorld({
     exit() {
       entered = false;
       hud.hide();
+      joystickEl.classList.remove('hidden');
       // The moment you step away is the moment "away" starts counting, so the
       // save's timestamp has to be written then, not a frame or a travel later.
       saveNow();

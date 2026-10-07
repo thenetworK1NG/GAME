@@ -80,6 +80,10 @@
     touch-action: none;
   }
 
+  /* On the farm the field is walked by tapping, so the stick ducks out of the
+     way for the whole stay. farm enter/exit toggles this class. */
+  #joystick.hidden { display: none; }
+
   /* Faint arrows so the stick reads as directional before you touch it. */
   #joystick::before {
     content: "";

@@ -133,6 +133,11 @@ async function main() {
   // instead of lerping across the gap between two places.
   let snapCamera = false;
 
+  // Where the farm frame points. Pinch-twists orbit around it, and any
+  // two-finger (or right-drag) pan slides it across the ground; the world's
+  // rig config stays untouched.
+  const overheadCenter = new THREE.Vector2();
+
   function enterWorld(world) {
     if (world === active) return;
     active?.exit?.();
@@ -142,6 +147,9 @@ async function main() {
     const overhead = world.rig && world.rig.overhead;
     if (overhead && overhead.distance) {
       look.distance = look.targetDistance = overhead.distance;
+    }
+    if (overhead && overhead.center) {
+      overheadCenter.set(overhead.center[0], overhead.center[1]);
     }
     player.position.set(world.spawn.x, 0, world.spawn.z);
     if (world.spawn.heading !== undefined) player.heading = world.spawn.heading;
@@ -214,6 +222,31 @@ async function main() {
   const cameraFocus = new THREE.Vector3();
   const cameraDesired = new THREE.Vector3();
 
+  // Screen-pixel pans become world movement on the floor plane (y=0) by
+  // unprojecting the drag to the ground, so the view slides exactly under the
+  // fingers at any zoom and pitch. Only overhead worlds (the farm) use it; the
+  // house follow camera drains the pan without doing anything with it.
+  function applyPan(dx, dy) {
+    if (!dx && !dy) return;
+    if (!rig.overhead) return;
+    const el = renderer.domElement;
+    camera.updateMatrixWorld();
+    const a = new THREE.Vector3(
+      (dx / el.clientWidth) * 2,
+      (-dy / el.clientHeight) * 2,
+      0.5
+    ).unproject(camera);
+    const b = new THREE.Vector3(0, 0, 0.5).unproject(camera);
+    a.sub(camera.position);
+    b.sub(camera.position);
+    const wx = a.x * (camera.position.y / -a.y) - b.x * (camera.position.y / -b.y);
+    const wz = a.z * (camera.position.y / -a.y) - b.z * (camera.position.y / -b.y);
+    // Dragging the world under the fingers moves the frame the opposite way,
+    // and the frame is bound to the island so it can never be panned away.
+    overheadCenter.x = Math.max(-11, Math.min(11, overheadCenter.x - wx));
+    overheadCenter.y = Math.max(-11, Math.min(11, overheadCenter.y - wz));
+  }
+
   // The camera yaw is now entirely the player's own doing: the view stays exactly
   // where the drag left it. Both mechanisms that used to undo a manual rotation
   // are gone, because both were fighting what was asked for:
@@ -257,18 +290,23 @@ async function main() {
       player.update(dt, move, cameraYaw);
       active.update(dt, cameraYaw);
 
+      // A two-finger slide (or right-button drag) pans the view; drained every
+      // frame so it can never leak between worlds or gestures.
+      const pan = look.consumePan();
+      applyPan(pan.x, pan.y);
+
       // ---------- Camera ----------
 
       if (overhead) {
         // A fixed frame over an anchor point: the whole field stays in view no
         // matter where the plushie wanders, and the player only moves the view
-        // on purpose (drag to orbit, pinch to zoom).
+        // on purpose (drag to orbit, pinch to zoom, two fingers to pan).
         const oPitch = THREE.MathUtils.clamp(
           overhead.pitch + (look.tiltOffset || 0),
           PITCH_MIN,
           PITCH_MAX
         );
-        const focal = { x: overhead.center[0], z: overhead.center[1] };
+        const focal = { x: overheadCenter.x, z: overheadCenter.y };
         const horizontal = Math.cos(oPitch) * zoomDistance;
         cameraFocus.set(focal.x, 0.6, focal.z);
         cameraDesired.set(
