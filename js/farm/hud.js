@@ -51,6 +51,12 @@ export function createHud({ onPick = () => {} } = {}) {
   const glyphEl = need('action-glyph');
   const action = need('action');
 
+  // Carrot chips stay out of the wallet until there is something to count:
+  // a new farm only shows coins and the two starter crops, and the carrot
+  // chips appear the moment you buy a carrot seed or grow a bunch.
+  const carrotSeedChip = carrotSeedEl.closest('.chip');
+  const carrotChip = carrotEl.closest('.chip');
+
   const buttons = new Map();
   const wearEls = new Map();
   for (const id of TOOLS) {
@@ -101,6 +107,7 @@ export function createHud({ onPick = () => {} } = {}) {
     tool: null, glyph: null, ready: null, enabled: null,
     hint: null, seeds: null, carrotSeed: null, wheat: null, carrot: null,
     coins: null, fence: null, walletEmpty: null, carried: null,
+    carrotSeedShown: null, carrotShown: null,
   };
   const lastWear = { hoe: undefined, can: undefined };
 
@@ -164,6 +171,12 @@ export function createHud({ onPick = () => {} } = {}) {
       last.carrotSeed = carrotSeed;
       carrotSeedEl.textContent = String(carrotSeed ?? 0);
     }
+    const showCarrotSeed = (carrotSeed ?? 0) > 0;
+    if (showCarrotSeed !== last.carrotSeedShown) {
+      last.carrotSeedShown = showCarrotSeed;
+      carrotSeedChip.classList.toggle('hidden', !showCarrotSeed);
+      carrotSeedChip.setAttribute('aria-hidden', showCarrotSeed ? 'false' : 'true');
+    }
     const wheat = counts.wheat;
     if (wheat !== last.wheat) {
       last.wheat = wheat;
@@ -173,6 +186,12 @@ export function createHud({ onPick = () => {} } = {}) {
     if (carrot !== last.carrot) {
       last.carrot = carrot;
       carrotEl.textContent = String(carrot ?? 0);
+    }
+    const showCarrot = (carrot ?? 0) > 0;
+    if (showCarrot !== last.carrotShown) {
+      last.carrotShown = showCarrot;
+      carrotChip.classList.toggle('hidden', !showCarrot);
+      carrotChip.setAttribute('aria-hidden', showCarrot ? 'false' : 'true');
     }
     const coins = counts.coins;
     if (coins !== last.coins) {

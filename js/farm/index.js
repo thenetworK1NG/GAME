@@ -5,7 +5,7 @@ import { buildIsland, skyTexture, WALK_RADIUS } from './island.js';
 import { createHud, DROP_ICON, GO_ICON } from './hud.js';
 import { createInventory } from './inventory.js';
 import {
-  createField, restoreField, serialiseField, plotWithinReach,
+  createField, restoreField, serialiseField, plotWithinReach, plotCenter,
   useTool, canUse, tickField, REACH, PLOT_CELL,
 } from './plots.js';
 import { createPlants } from './plants.js';
@@ -415,6 +415,18 @@ export function createFarmWorld({
   scene.add(plants.group);
   plants.refresh();
 
+  // An invisible floor-level plate covering the walkable island, so a tap that
+  // misses every plot and fence slot still resolves to a spot to walk to. It
+  // writes neither colour nor depth, so it renders nothing under the ground.
+  const groundHit = new THREE.Mesh(
+    new THREE.PlaneGeometry(26, 26),
+    new THREE.MeshBasicMaterial({ colorWrite: false, depthWrite: false })
+  );
+  groundHit.rotation.x = -Math.PI / 2;
+  groundHit.renderOrder = -10;
+  groundHit.userData.ground = true;
+  scene.add(groundHit);
+
   const hud = createHud({
     onPick: (id) => {
       tool = id;
@@ -438,16 +450,31 @@ export function createFarmWorld({
   const raycaster = new THREE.Raycaster();
   const ndc = new THREE.Vector2();
 
-  // Every surface a stroke can meet, plot planes and fence slots in one
-  // ray-cast pass. Nearest hit wins, so a fence slot peeking out between plot
-  // corners is never stolen by the plot beside it.
-  const strokeSurfaces = () => plants.hits.children.concat(fenceWorld.hits.children);
+  // Which surfaces a press meets depends on the tool: farm tools only ever hit
+  // the plot planes, and the fence tool only ever hits the fence planes. That
+  // exclusivity matters - the fence plates (a hair higher in y) sit on the
+  // gridlines between plots, overlapping half a metre of every neighbouring
+  // edge, so mixing both in one cast made a huge share of plot taps resolve to
+  // a fence and do nothing. `withGround` also adds the invisible island floor,
+  // so a tap that misses everything still points at somewhere to walk.
+  function pickSurfaces(withGround = false) {
+    const list = tool === 'fence' ? fenceWorld.hits.children : plants.hits.children;
+    if (!withGround) return list;
+    return list.length ? list.concat([groundHit]) : [groundHit];
+  }
 
   // A stroke begins on the first pointer down and ends on the last up. A tap
-  // is the stroke that never moved far enough to be a drag: it pins one plot
-  // and works it. A drag paints the same tool across every plot or fence slot
-  // the pointer crosses, within reach, once per cast.
+  // is the stroke that never moved far enough to be a drag: it walks the
+  // plushie to the tapped spot and works it. A drag paints the same tool
+  // across every plot or fence slot the pointer crosses, within reach, once
+  // per cast.
   let stroke = null;
+
+  // True for the whole of a canvas press, so the shared camera leaves the
+  // gesture alone (painting needs a steady aim; a tap is a deliberate walk).
+  // Only touch presses are pinned: a desktop mouse keeps its one-button orbit.
+  let holding = false;
+  let holdingTouch = false;
 
   renderer.domElement.addEventListener('pointerdown', onPress);
   renderer.domElement.addEventListener('pointermove', onMove);
@@ -470,19 +497,15 @@ export function createFarmWorld({
     if (!entered) return;
     if (event.pointerType === 'mouse' && event.button !== 0) return;
     if (!event.isPrimary) return;
+    // A carried piece pins the hands: canvas presses neither walk nor paint -
+    // the action button drops the haul.
+    if (furniture.carried) return;
 
     ndcFrom(event);
     event.preventDefault();
     renderer.domElement.setPointerCapture(event.pointerId);
-
-    // A carried piece pins the hands: a press may mark a plot as the goal to
-    // set the haul down on, but nothing gets worked and no sweeps start.
-    if (furniture.carried) {
-      const hit = pickAt(ndc);
-      sel = hit && hit.kind === 'plot' ? hit.plot : null;
-      paint(true);
-      return;
-    }
+    holding = true;
+    holdingTouch = event.pointerType === 'touch' || event.pointerType === 'pen';
 
     // The stroke uses its own wear budget, cloned from what the plushie has
     // right now, so a can that dies mid-sweep stalls the sweep instead of
@@ -515,6 +538,8 @@ export function createFarmWorld({
     if (renderer.domElement.hasPointerCapture(event.pointerId)) {
       renderer.domElement.releasePointerCapture(event.pointerId);
     }
+    holding = false;
+    holdingTouch = false;
     const gesture = stroke;
     stroke = null;
     // Both branches spend from the clone; settle the real tools once, no
@@ -522,7 +547,7 @@ export function createFarmWorld({
     tools.hoe = gesture.tools.hoe;
     tools.can = gesture.tools.can;
     if (gesture.moved) finishStroke(gesture);
-    else resolveTap(gesture);
+    else tapTo(gesture);
   }
 
   function finishStroke(gesture) {
@@ -534,29 +559,57 @@ export function createFarmWorld({
     paint(true);
   }
 
-  /** A tap: pick the nearest surface and act on it, exactly like a press. */
-  function resolveTap(gesture) {
+  /**
+   * A tap never has to reach: it walks. The plushie heads for the tapped spot
+   * - a plot, a fence slot, or open ground - and works what it lands on. A
+   * plot already within reach is worked on the spot.
+   */
+  function tapTo(gesture) {
     if (!entered) return;
-    const hit = pickAt(gesture.start);
+    const hit = pickAt(gesture.start, true);
     if (!hit) {
-      // Open ground is the way to let go of a distant selection.
+      clearGoal();
       sel = null;
       paint(true);
       return;
     }
     if (hit.kind === 'fence') {
-      if (gesture.tool === 'fence') actFence(hit.slot);
-      else sel = null;
-      paint(true);
-      saveNow();
-      return;
-    }
-    if (gesture.tool === 'fence') {
+      if (gesture.tool !== 'fence') {
+        sel = null;
+        paint(true);
+        return;
+      }
+      const mid = slotMid(hit.slot.a, hit.slot.l, hit.slot.s);
+      walkTo({ x: mid.x, z: mid.z }, () => actFence(hit.slot), REACH);
       sel = null;
       paint(true);
       return;
     }
-    selectPlot(hit.plot, gesture.tools);
+    if (hit.kind === 'plot') {
+      if (gesture.tool === 'fence') {
+        // Fence mode never works a plot: walk across to wherever it points.
+        walkTo(plotCenter(hit.plot));
+        sel = null;
+        paint(true);
+        return;
+      }
+      const center = plotCenter(hit.plot);
+      sel = hit.plot;
+      plants.setTarget(sel);
+      if (plotWithinReach(sel, player.position.x, player.position.z)) {
+        actOn(hit.plot, gesture.tools);
+      } else {
+        walkTo(center, () => actOn(hit.plot, gesture.tools), REACH);
+      }
+      paint(true);
+      return;
+    }
+    // Open ground: walk to the spot and let go of any selection.
+    clearGoal();
+    sel = null;
+    plants.setTarget(null);
+    walkTo({ x: hit.point.x, z: hit.point.z });
+    paint(true);
   }
 
   function sweepTo(value) {
@@ -566,13 +619,16 @@ export function createFarmWorld({
     else if (stroke.tool !== 'fence') touchPlot(hit.plot);
   }
 
-  function pickAt(p) {
+  function pickAt(p, withGround = false) {
     ndc.x = p.x;
     ndc.y = p.y;
     raycaster.setFromCamera(ndc, camera);
-    const all = raycaster.intersectObjects(strokeSurfaces(), false);
+    const all = raycaster.intersectObjects(pickSurfaces(withGround), false);
     const closest = all[0];
     if (!closest) return null;
+    if (closest.object.userData.ground) {
+      return { kind: 'ground', point: closest.point };
+    }
     if (closest.object.userData.fence) {
       return { kind: 'fence', slot: closest.object.userData.slot };
     }
@@ -652,30 +708,72 @@ export function createFarmWorld({
     actFenceStrength(slot, false);
   }
 
-  /**
-   * Mark the tapped plot. Within reach, act immediately - the tap *is* the
-   * stroke. Further away, the glow stays put as the goal to walk to.
-   */
-  function selectPlot(plot, bag) {
-    if (tool === 'fence') {
-      sel = null;
-      paint(true);
-      return;
-    }
-    sel = plot;
-    plants.setTarget(sel);
-    // A carried piece pins the hands: tapping plots while holding something
-    // marks the plot but never works it (the button would drop the haul).
-    // onPress already steers carried presses away, but close the door anyway.
-    if (furniture.carried) {
-      paint(true);
-      return;
-    }
-    if (plotWithinReach(sel, player.position.x, player.position.z)) {
-      actOn(sel, bag);
+  // ---------- Walking to a tap ----------
+
+  // Where the plushie is walking, what to do exactly once on arrival, and how
+  // close counts as arrived. A tap only ever sets this; acting happens in
+  // followGoal when the walk gets there.
+  let goal = null;
+  let goalOnArrive = null;
+  let goalReach = 0.14;
+
+  const steer = new THREE.Vector2();
+
+  function walkTo(point, onArrive = null, reach = 0.14) {
+    clearGoal();
+    goal = { x: point.x, z: point.z };
+    goalOnArrive = onArrive;
+    goalReach = reach;
+  }
+
+  function clearGoal() {
+    goal = null;
+    goalOnArrive = null;
+  }
+
+  /** Per-frame once the plushie has moved: act on arrival, or stop in place. */
+  function followGoal() {
+    if (!goal) return;
+    const g = goal;
+    const dx = player.position.x - g.x;
+    const dz = player.position.z - g.z;
+    if (dx * dx + dz * dz > goalReach * goalReach) return;
+    if (goalOnArrive) {
+      const act = goalOnArrive;
+      clearGoal();
+      act();
     } else {
-      paint(true);
+      clearGoal();
     }
+  }
+
+  /**
+   * game.js hands this the joystick instead of using it directly: while a walk
+   * goal is live (and the thumbs stay off the stick) this returns a steering
+   * vector aimed at the goal, camera-relative exactly as Player.update expects.
+   * Any real stick push cancels the walk and takes over.
+   */
+  function stick(joy, cameraYaw) {
+    if (!goal || !entered) {
+      steer.set(joy.x, joy.y);
+      return steer;
+    }
+    if (Math.hypot(joy.x, joy.y) > 0.15) {
+      clearGoal();
+      steer.set(joy.x, joy.y);
+      return steer;
+    }
+    const dx = goal.x - player.position.x;
+    const dz = goal.z - player.position.z;
+    const dist = Math.hypot(dx, dz);
+    if (dist < 1e-3) return steer.set(0, 0);
+    const cos = Math.cos(cameraYaw);
+    const sin = Math.sin(cameraYaw);
+    const wx = dx / dist;
+    const wz = dz / dist;
+    // Inverse of the Player.update decomposition: (world) = R * (stick).
+    steer.set(wx * -cos + wz * sin, wx * sin + wz * cos);
+    return steer;
   }
 
   function applyTool(plot, t, inv, bag) {
@@ -940,6 +1038,8 @@ export function createFarmWorld({
         // Fence mode never keeps a selection; this only holds for the frame
         // between picking the fence and the first tap.
         hint = 'Tap a gap between plots to build';
+      } else if (goal && goalOnArrive) {
+        hint = 'Walking to the plot…';
       } else if (plotWithinReach(sel, player.position.x, player.position.z)) {
         const verdict = canUse(sel, tool, inventory, tools);
         if (verdict.ok) {
@@ -952,7 +1052,7 @@ export function createFarmWorld({
           if (canUse(sel, t, inventory, tools).ok) { ready = t; break; }
         }
       } else {
-        hint = 'Walk to the selected plot';
+        hint = 'Tap the plot to walk over and work it';
       }
     } else if (tool === 'fence' && (counts.fence || 0) <= 0) {
       hint = REASONS['no-fence'];
@@ -1007,6 +1107,10 @@ export function createFarmWorld({
     player.position.z = scratch.z;
     player.group.position.copy(player.position);
 
+    // ---------- Walking to a tap ----------
+
+    followGoal();
+
     // ---------- Growth ----------
 
     tickField(plots, dt);
@@ -1035,15 +1139,29 @@ export function createFarmWorld({
     id: 'farm',
     scene,
     spawn: SPAWN,
+    // A fixed frame over the field instead of a follow camera: the whole farm
+    // stays in view while the plushie wanders, and a tap is a walk, not a
+    // reach test. Drag (or pinch-twist) still orbits, pinch zooms.
+    rig: {
+      overhead: {
+        yaw: 0,                                   // the arch ends up at the screen's edge
+        pitch: THREE.MathUtils.degToRad(63),
+        distance: 15,
+        center: [0, 0],
+      },
+    },
     update,
     plants,
     furniture,
+    stick,
+    get holding() { return holdingTouch; },
     enter() {
       entered = true;
       player.group.position.copy(player.position);
       scene.add(player.group);
       hud.show();
       sel = null;
+      clearGoal();
       paint(true);
     },
     exit() {
@@ -1071,7 +1189,11 @@ export function createFarmWorld({
         if (plotWithinReach(sel, player.position.x, player.position.z)) {
           actOn(sel);
         } else {
-          hud.warn();
+          // The button now behaves like a tap: walk over and work it.
+          const target = sel;
+          const center = plotCenter(target);
+          walkTo(center, () => actOn(target), REACH);
+          paint(true);
         }
       }
     },

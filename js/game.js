@@ -89,7 +89,14 @@ async function main() {
   // ---------- Shared actors ----------
 
   const joystick = new Joystick();
-  const look = new CameraLook(stage, { min: ZOOM_MIN, max: ZOOM_MAX });
+  const look = new CameraLook(stage, {
+    min: ZOOM_MIN,
+    max: ZOOM_MAX,
+    // While the farm holds a canvas press it owns the gesture - painting a
+    // sweep of plots, or tapping a walk goal - so a dragging single finger must
+    // not also orbit the camera and pull the aim off the field.
+    suppressDrag: () => !!(active && active.holding),
+  });
   look.distance = CAMERA_DISTANCE;
   look.targetDistance = CAMERA_DISTANCE;
 
@@ -131,6 +138,11 @@ async function main() {
     active?.exit?.();
     active = world;
     Object.assign(rig, CAMERA_RIG, world.rig);
+    // An overhead world opens zoomed to its framing distance.
+    const overhead = world.rig && world.rig.overhead;
+    if (overhead && overhead.distance) {
+      look.distance = look.targetDistance = overhead.distance;
+    }
     player.position.set(world.spawn.x, 0, world.spawn.z);
     if (world.spawn.heading !== undefined) player.heading = world.spawn.heading;
     world.enter?.();
@@ -227,33 +239,57 @@ async function main() {
 
       // The offset persists rather than easing back: it is the player's view.
       const zoomDistance = look.update(dt);
+      const overhead = rig.overhead;
       const pitch = THREE.MathUtils.clamp(
         rig.pitch + (look.tiltOffset || 0),
         PITCH_MIN,
         PITCH_MAX
       );
 
-      // The stick is measured against the rotated view, so pushing up always
-      // moves up-screen in the orientation the player set.
-      cameraYaw = look.yawOffset;
+      // Overhead worlds anchor their yaw to the rig instead of the follow
+      // heading, so tapping south still walks down-screen in any orientation.
+      cameraYaw = overhead ? overhead.yaw + look.yawOffset : look.yawOffset;
 
-      player.update(dt, stickVector, cameraYaw);
-      active.update(dt);
+      // The stick is measured against the rotated view, so pushing up always
+      // moves up-screen in the orientation the player set. An active world may
+      // replace the thumb stick with auto-steering toward a tapped goal.
+      const move = active.stick ? active.stick(joystick.vector, cameraYaw) : stickVector;
+      player.update(dt, move, cameraYaw);
+      active.update(dt, cameraYaw);
 
       // ---------- Camera ----------
 
-      // Look slightly ahead of the player so there is room to see where they
-      // are heading.
-      cameraFocus.x = player.position.x + Math.sin(player.heading) * rig.lookAhead;
-      cameraFocus.z = player.position.z + Math.cos(player.heading) * rig.lookAhead;
-      cameraFocus.y = rig.height * 0.55;
+      if (overhead) {
+        // A fixed frame over an anchor point: the whole field stays in view no
+        // matter where the plushie wanders, and the player only moves the view
+        // on purpose (drag to orbit, pinch to zoom).
+        const oPitch = THREE.MathUtils.clamp(
+          overhead.pitch + (look.tiltOffset || 0),
+          PITCH_MIN,
+          PITCH_MAX
+        );
+        const focal = { x: overhead.center[0], z: overhead.center[1] };
+        const horizontal = Math.cos(oPitch) * zoomDistance;
+        cameraFocus.set(focal.x, 0.6, focal.z);
+        cameraDesired.set(
+          focal.x - Math.sin(cameraYaw) * horizontal,
+          Math.sin(oPitch) * zoomDistance,
+          focal.z - Math.cos(cameraYaw) * horizontal
+        );
+      } else {
+        // Look slightly ahead of the player so there is room to see where they
+        // are heading.
+        cameraFocus.x = player.position.x + Math.sin(player.heading) * rig.lookAhead;
+        cameraFocus.z = player.position.z + Math.cos(player.heading) * rig.lookAhead;
+        cameraFocus.y = rig.height * 0.55;
 
-      const horizontal = Math.cos(pitch) * zoomDistance;
-      cameraDesired.set(
-        cameraFocus.x - Math.sin(cameraYaw) * horizontal,
-        cameraFocus.y + Math.sin(pitch) * zoomDistance,
-        cameraFocus.z - Math.cos(cameraYaw) * horizontal
-      );
+        const horizontal = Math.cos(pitch) * zoomDistance;
+        cameraDesired.set(
+          cameraFocus.x - Math.sin(cameraYaw) * horizontal,
+          cameraFocus.y + Math.sin(pitch) * zoomDistance,
+          cameraFocus.z - Math.cos(cameraYaw) * horizontal
+        );
+      }
 
       if (snapCamera) {
         camera.position.copy(cameraDesired);

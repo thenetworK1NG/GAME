@@ -484,6 +484,10 @@
   #wallet .chip.carrotSeed svg { color: #9ac46a; }
   #wallet.empty .chip { opacity: 0.45; }
 
+  /* Chips that have nothing to count yet (carrot seeds, carrots) stay out of
+     the wallet until the first one exists. */
+  #wallet .chip.hidden { display: none; }
+
   /* Tool rail: the six moves of the loop, docked into one glass tube above
      the action button. Both live under the right thumb, the hand that presses
      Action, so a tool swap is a nudge instead of a reach across the screen;
@@ -808,6 +812,18 @@
 
   #shop.open .dest-sheet { transform: none; }
 
+  /* The stall has far more rows than the destination picker, so its sheet is a
+     column that pins the header and lets the list scroll on short screens.
+     Only the shop gets this: the picker keeps its own snug layout. */
+  #shop .dest-sheet {
+    display: flex;
+    flex-direction: column;
+    max-height: min(600px, calc(100vh - 32px));
+  }
+
+  #shop .dest-head,
+  #shop .shop-balance { flex: none; }
+
   #shop-close {
     width: 34px;
     height: 34px;
@@ -837,6 +853,14 @@
     display: grid;
     gap: 10px;
     padding: 14px;
+    /* Scrolling lives here, inside the sheet, so a tall list never overflows
+       the screen and the header/balance stay put above it. */
+    flex: 0 1 auto;
+    min-height: 0;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    -webkit-overflow-scrolling: touch;
+    touch-action: pan-y;
   }
 
   .shop-group {
@@ -1088,7 +1112,8 @@
 
        The wallet is the whole economy in five numbers: coins, both seed bags,
        and both harvests. The tool rail buttons are injected from TOOLS (plus
-       the separate fence builder) in js/farm/items.js. -->
+       the separate fence builder) in js/farm/items.js. The carrot-seed and
+       carrot chips are hidden until the player owns one (see hud.js). -->
   <div id="wallet" aria-hidden="true">
     <div class="chip coins">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"

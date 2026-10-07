@@ -193,11 +193,12 @@ export class Joystick {
  * eased toward its target so the zoom never feels steppy.
  */
 export class CameraLook {
-  constructor(stage, { min = 4.5, max = 17, sensitivity = 0.006 } = {}) {
+  constructor(stage, { min = 4.5, max = 17, sensitivity = 0.006, suppressDrag = null } = {}) {
     this.stage = stage;
     this.min = min;
     this.max = max;
     this.sensitivity = sensitivity;
+    this.suppressDrag = suppressDrag;
 
     this.yawOffset = 0;      // radians, relative to the follow heading
     this.tiltOffset = 0;     // radians, added to the base pitch
@@ -206,6 +207,7 @@ export class CameraLook {
 
     this._pointers = new Map();
     this._pinchStart = 0;
+    this._pinchStartAngle = 0;
     this._pinchBaseDistance = 11;
     this._lastX = 0;
     this._lastY = 0;
@@ -232,9 +234,11 @@ export class CameraLook {
   }
 
   _onDown(event) {
-    // The joystick and action button handle their own touches; ignore anything
-    // that started on either so pressing them never also orbits the camera.
-    if (event.target.closest && event.target.closest('#joystick, #action')) return;
+    // The joystick and the game's buttons handle their own touches; ignore
+    // anything that started on them so pressing one never also orbits the
+    // camera.
+    const ui = '#joystick, #action, #rotate, #tool-rail, #wallet, #shop, #destinations';
+    if (event.target.closest && event.target.closest(ui)) return;
 
     this._pointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
     event.preventDefault();
@@ -252,6 +256,7 @@ export class CameraLook {
   _beginPinch() {
     const [a, b] = [...this._pointers.values()];
     this._pinchStart = Math.hypot(a.x - b.x, a.y - b.y) || 1;
+    this._pinchStartAngle = Math.atan2(a.y - b.y, a.x - b.x);
     this._pinchBaseDistance = this.targetDistance;
     this._pinching = true;
     this._activeId = null;
@@ -269,10 +274,28 @@ export class CameraLook {
       // Fingers apart (span grows) => pull the camera in.
       const ratio = this._pinchStart / span;
       this.targetDistance = this._clampDistance(this._pinchBaseDistance * ratio);
+
+      // A constant-distance twist orbits the camera, so on a pinch you can
+      // zoom and swing around at once.
+      const angle = Math.atan2(a.y - b.y, a.x - b.x);
+      let turn = angle - this._pinchStartAngle;
+      while (turn > Math.PI) turn -= Math.PI * 2;
+      while (turn < -Math.PI) turn += Math.PI * 2;
+      this.yawOffset -= turn;
+      this._pinchStartAngle = angle;
       return;
     }
 
     if (event.pointerId !== this._activeId) return;
+
+    // Some worlds own the single-finger gesture (a farm painting a sweep of
+    // plots, or tapping out a walk): while that press is live the camera does
+    // not orbit, so the drag stays aimed at the field it started on.
+    if (this.suppressDrag && this.suppressDrag()) {
+      this._lastX = event.clientX;
+      this._lastY = event.clientY;
+      return;
+    }
 
     const dx = event.clientX - this._lastX;
     const dy = event.clientY - this._lastY;
