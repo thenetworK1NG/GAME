@@ -450,7 +450,11 @@ export function createFarmWorld({
   const shopList = need('shop-list');
   let shopOpen = false;
 
-  shopRoot.addEventListener('click', (event) => {
+  // Dismiss on pointerdown, not click: the press that opens the sheet sits
+  // under the backdrop as it appears, and its release would otherwise read as
+  // a dismissal of the very sheet it just opened. pointerdown fires once per
+  // gesture, so the opening press can never come back as a tap-away.
+  shopRoot.addEventListener('pointerdown', (event) => {
     if (event.target === shopRoot) closeShop();
   });
   shopClose.addEventListener('click', closeShop);

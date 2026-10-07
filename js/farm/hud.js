@@ -75,12 +75,14 @@ export function createHud({ onPick = () => {} } = {}) {
   let visible = false;
 
   // Last-painted state, so paint() never touches the DOM twice in a row.
+  // lastWear uses `undefined` for "never painted" and `null` for "tool not
+  // owned", so the locked/owned toggle runs on the very first paint.
   const last = {
     tool: null, glyph: null, ready: null, enabled: null,
     hint: null, seeds: null, wheat: null, coins: null,
     walletEmpty: null, carried: null,
   };
-  const lastWear = { hoe: null, can: null };
+  const lastWear = { hoe: undefined, can: undefined };
 
   function paint(state) {
     const tool = state.tool;
@@ -95,6 +97,10 @@ export function createHud({ onPick = () => {} } = {}) {
     if (carried !== last.carried) {
       last.carried = carried;
       action.classList.toggle('carrying', carried);
+      // While the hands hold something, the rail fades out: the rotate button
+      // owns that corner, and you cannot reach the tools anyway.
+      rail.classList.toggle('fading', carried);
+      rail.setAttribute('aria-hidden', carried ? 'true' : 'false');
     }
     if (glyph !== last.glyph) {
       last.glyph = glyph;
@@ -160,7 +166,10 @@ export function createHud({ onPick = () => {} } = {}) {
       buttons.get(id).classList.toggle('locked', !held);
       buttons.get(id).setAttribute('aria-disabled', held ? 'false' : 'true');
       buttons.get(id).classList.toggle('worn', held && w <= 0);
-      if (held) el.style.width = (Math.max(0, Math.min(1, w)) * 100).toFixed(1) + '%';
+      if (held) {
+        const frac = Math.max(0, Math.min(1, w));
+        el.style.transform = 'scaleX(' + frac.toFixed(3) + ')';
+      }
     }
   }
 

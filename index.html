@@ -477,35 +477,55 @@
   #wallet .chip.coins svg { color: #ffd77a; }
   #wallet.empty .chip { opacity: 0.45; }
 
-  /* Tool rail: the four moves of the loop, stacked down the left edge. The
-     vertial middle stays clear of the stick (bottom) and the menu (top right). */
+  /* Tool rail: the four moves of the loop, docked into one glass tube above
+     the action button. Both live under the right thumb, the hand that presses
+     Action, so a tool swap is a nudge instead of a reach across the screen;
+     the left thumb stays parked on the stick. */
   #tool-rail {
     position: fixed;
-    left: max(12px, calc(var(--safe-left) + 12px));
-    top: 50%;
-    transform: translateY(-50%) translateX(-10px);
-    display: grid;
-    gap: 10px;
+    right: max(12px, calc(var(--safe-right) + 12px));
+    bottom: max(12px, calc(var(--safe-bottom) + 14px));
+    /* Ride on top of the action button, the same clearance the rotate button
+       uses so the two swap cleanly when a carry starts. */
+    margin-bottom: calc(min(var(--action-size), 26vw) + 14px);
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    padding: 8px;
+    border-radius: 18px;
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    background: rgba(17, 24, 32, 0.5);
+    backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: blur(8px);
     z-index: 16;
     opacity: 0;
     visibility: hidden;
     pointer-events: none;
+    transform: translateX(10px);
     transition: opacity 140ms ease, transform 140ms ease;
   }
 
   #tool-rail.visible {
     opacity: 1;
-    transform: translateY(-50%);
+    transform: none;
     visibility: visible;
     pointer-events: auto;
   }
 
+  /* Carrying: the rail steps out of the way so the rotate button can own the
+     corner. */
+  #tool-rail.fading {
+    opacity: 0;
+    transform: translateX(10px);
+    pointer-events: none;
+  }
+
   #tool-rail .tool {
-    width: 52px;
-    height: 52px;
-    border-radius: 14px;
-    border: 1.5px solid rgba(255, 255, 255, 0.16);
-    background: rgba(17, 24, 32, 0.55);
+    width: 50px;
+    height: 50px;
+    border-radius: 12px;
+    border: 1.5px solid transparent;
+    background: transparent;
     color: var(--ui);
     position: relative;
     display: flex;
@@ -520,36 +540,47 @@
   #tool-rail .tool svg { width: 26px; height: 26px; }
 
   #tool-rail .tool:active {
-    transform: scale(0.92);
-    background: rgba(255, 255, 255, 0.22);
+    transform: scale(0.9);
+    background: rgba(255, 255, 255, 0.18);
   }
 
+  /* The loaded tool: a warm gold seat so it reads at a glance which move a
+     plot tap is about to make. */
   #tool-rail .tool.selected {
-    background: rgba(255, 255, 255, 0.22);
-    border-color: rgba(255, 255, 255, 0.55);
+    background: rgba(255, 213, 138, 0.14);
+    border-color: rgba(255, 200, 90, 0.9);
+    color: #ffe2ae;
+    box-shadow: inset 0 0 12px rgba(255, 190, 80, 0.28);
   }
 
-  /* The tool that would currently work breathes softly, so the rail teaches
+  /* The tool that would currently work breathes a soft gold halo, teaching
      the loop instead of expecting it to be memorised. */
   #tool-rail .tool.ready:not(.selected) {
-    border-color: rgba(255, 200, 90, 0.65);
+    border-color: rgba(255, 200, 90, 0.5);
+    animation: ready-pulse 1.6s ease-in-out infinite;
   }
 
-  /* Wear: a sliver under the icon. Full when new, gone when it breaks, and a
-     reddish blink while it is down to its last few actions. */
+  @keyframes ready-pulse {
+    0%, 100% { box-shadow: 0 0 0 0 rgba(255, 200, 90, 0); }
+    50%      { box-shadow: 0 0 0 4px rgba(255, 200, 90, 0.18); }
+  }
+
+  /* Wear: a life gauge under the icon, filled from the left. Full when new,
+     gone when it breaks, and a reddish tint while it is on its last actions. */
   #tool-rail .tool .wear {
     position: absolute;
-    left: 7px;
-    right: 7px;
-    bottom: 5px;
+    left: 8px;
+    right: 8px;
+    bottom: 6px;
     height: 3px;
     border-radius: 3px;
-    background: rgba(140, 208, 255, 0.65);
-    width: 100%;
+    background: rgba(140, 208, 255, 0.7);
+    transform-origin: left center;
+    transform: scaleX(0);
     pointer-events: none;
   }
 
-  #tool-rail .tool.worn .wear { background: rgba(255, 120, 105, 0.75); }
+  #tool-rail .tool.worn .wear { background: rgba(255, 120, 105, 0.8); }
 
   /* Not owned yet (a watering can you have not bought): dimmed and barred. */
   #tool-rail .tool.locked {
