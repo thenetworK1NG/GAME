@@ -1,19 +1,19 @@
 /**
  * The fence: where a run of fencing can stand along the field's gridlines.
  *
- * A 6x6 field has 7 gap-lines in each direction (the three across the field
- * plus the two edges), each holding 6 segments between junctions. Every
+ * A 8x8 field has 9 gap-lines in each direction (the seven across the field
+ * plus the two edges), each holding 8 segments between junctions. Every
  * segment is a possible fence post; the world turns each placed one into a
  * length of post-and-rail and gives its slot a tap target. Pure rules, so the
  * probe can lay out whole paddocks without a canvas.
  */
 import { PLOT_COUNT, PLOT_CELL } from './plots.js';
 
-export const LINES = PLOT_COUNT + 1;           // 7 gap-lines each way
-export const SEGMENTS = PLOT_COUNT;            // 6 segments on each line
-export const FENCE_SLOT_COUNT = LINES * SEGMENTS * 2; // 84
+export const LINES = PLOT_COUNT + 1;           // 9 gap-lines each way
+export const SEGMENTS = PLOT_COUNT;            // 8 segments on each line
+export const FENCE_SLOT_COUNT = LINES * SEGMENTS * 2; // 144
 
-// Gap-lines sit at the plot edges: -3..3 in steps of one for a 6x6 field.
+// Gap-lines sit at the plot edges: -4.8..4.8 in steps of 1.2 for an 8x8 field.
 const start = -(PLOT_COUNT / 2) * PLOT_CELL;
 
 /** Unique slot key from an axis and grid line/segment numbers. */

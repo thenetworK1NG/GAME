@@ -8,8 +8,8 @@ import { PLOT_COUNT, PLOT_CELL, PLOT_INSET, plotCenter } from './plots.js';
  * hoed, the crop, the highlight on the plot you have tapped, and the little
  * bar that says how far along it is.
  *
- * Geometry and materials are meant to be shared between plots - thirty-six
- * copies of the same stalk is thirty-six times the memory for no visual gain.
+ * Geometry and materials are meant to be shared between plots - sixty-four
+ * copies of the same stalk is sixty-four times the memory for no visual gain.
  * The two crops share the same stalk geometry and only swap materials, so a
  * carrot costs no new meshes. Only the per-plot material colours differ,
  * because a half-ripe row next to a ripe one is the clearest possible progress

@@ -196,12 +196,13 @@ export class Joystick {
  * toward its target so the zoom never feels steppy.
  */
 export class CameraLook {
-  constructor(stage, { min = 4.5, max = 17, sensitivity = 0.006, suppressDrag = null } = {}) {
+  constructor(stage, { min = 4.5, max = 17, sensitivity = 0.006, suppressDrag = null, panOverride = null } = {}) {
     this.stage = stage;
     this.min = min;
     this.max = max;
     this.sensitivity = sensitivity;
     this.suppressDrag = suppressDrag;
+    this.panOverride = panOverride;
 
     this.yawOffset = 0;      // radians, relative to the follow heading
     this.tiltOffset = 0;     // radians, added to the base pitch
@@ -328,9 +329,10 @@ export class CameraLook {
     this._lastX = event.clientX;
     this._lastY = event.clientY;
 
-    // The right-button drag is a pan: the world follows the mouse instead of
-    // the camera orbiting around it.
-    if (this._panMode) {
+    // The right-button drag pans; a world can also claim a one-finger drag as
+    // a pan (the farm, whose presses on open ground are pans, not paints). In
+    // both cases the world follows the pointer instead of the camera orbiting.
+    if (this._panMode || (this._panOverride && this._panOverride())) {
       this.panDX += dx;
       this.panDY += dy;
       return;

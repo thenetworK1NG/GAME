@@ -17,8 +17,8 @@ import {
   DIRT_SECONDS, catchUp, growthStep, isReady, CROPS,
 } from './items.js';
 
-export const PLOT_COUNT = 6;
-export const PLOT_CELL = 1.0;
+export const PLOT_COUNT = 8;
+export const PLOT_CELL = 1.2;
 // Grass showing between plots, so a tilled square reads as a patch of ground
 // rather than as one continuous dark floor.
 export const PLOT_INSET = 0.06;
@@ -31,10 +31,10 @@ export const FIELD_CENTER = { x: 0, z: 0 };
 // standing on the field's edge reaches the near row but not the far one.
 export const REACH = 1.55;
 
-// The reach a drag sweep gets on top of the walk-and-work reach: from anywhere
-// in the field's interior a long stroke covers every plot, so you walk into
-// the middle once and then paint rows without shuffling.
-export const PAINT_REACH = 4.0;
+// The reach a drag sweep gets on top of the walk-and-work reach: from the
+// middle of an 8x8 field a long stroke covers every plot, so you walk into the
+// middle once and then paint rows without shuffling.
+export const PAINT_REACH = 6.5;
 
 /** Centre of a plot in world space. */
 export function plotCenter(plot) {

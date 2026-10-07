@@ -96,6 +96,9 @@ async function main() {
     // sweep of plots, or tapping a walk goal - so a dragging single finger must
     // not also orbit the camera and pull the aim off the field.
     suppressDrag: () => !!(active && active.holding),
+    // And a press the farm decides is open ground is a one-finger pan: the
+    // drag moves the view instead of the camera orbiting it.
+    panOverride: () => !!(active && active.panGesture),
   });
   look.distance = CAMERA_DISTANCE;
   look.targetDistance = CAMERA_DISTANCE;

@@ -17,7 +17,7 @@ const SPAWN = { x: 0, z: 7.5, heading: Math.PI };
 
 // Where the market stall stands: beside the path from the spawn to the field,
 // close enough to be a stop on the way home rather than a detour.
-const STALL = { x: -5, z: 5 };
+const STALL = { x: -7, z: 7 };
 
 // Tool id to the sound that voices it. The clip is one shared recording, so
 // the four actions are four speeds of the same thunk rather than four assets.
@@ -36,7 +36,7 @@ const REASONS = {
   'no-fence': 'No fence pieces — buy some at the shop',
   'no-tool': 'Buy this tool at the shop',
   worn: 'Worn out — buy a new one at the shop',
-  'no-plot': 'Tap to walk · two fingers to pan · drag to paint',
+  'no-plot': 'Tap to walk · drag a plot to work · drag open ground to pan',
 };
 
 // Seconds between background autosaves, so a crash costs at most this much.
@@ -272,7 +272,10 @@ function buildFenceWorld(fences) {
   const slotMat = new THREE.MeshBasicMaterial({
     transparent: true, opacity: 0, depthWrite: false, side: THREE.DoubleSide,
   });
-  const slotGeo = new THREE.PlaneGeometry(0.9, 0.9);
+  // ~85% of a cell, so a tap anywhere along a gap-line lands on the nearest
+  // slot. The plot planes are excluded from the fence tool's picks, so the
+  // overlap on either side never shadows a plot tap.
+  const slotGeo = new THREE.PlaneGeometry(PLOT_CELL * 0.85, PLOT_CELL * 0.85);
 
   forEachSlot((slot) => {
     const mid = slotMid(slot.a, slot.l, slot.s);
@@ -474,6 +477,12 @@ export function createFarmWorld({
   // per cast.
   let stroke = null;
 
+  // A press that landed on nothing actionable - open ground, a gridline, past
+  // the field. It stays a tap (walk to the spot) until it drags, then it hands
+  // itself to the camera as a one-finger pan, so a single thumb on grass pans
+  // the view instead of painting air.
+  let panPress = null;
+
   // True for the whole of a canvas press, so the shared camera leaves the
   // gesture alone (painting needs a steady aim; a tap is a deliberate walk).
   // Only touch presses are pinned: a desktop mouse keeps its one-button orbit.
@@ -503,29 +512,38 @@ export function createFarmWorld({
     // A carried piece pins the hands: canvas presses neither walk nor paint -
     // the action button drops the haul.
     if (furniture.carried) return;
-    if (!event.isPrimary) {
-      // A second finger joining a live stroke hands the gesture to the camera
-      // (two-finger pan, zoom and twist); abandon the sweep so a pinch cannot
-      // keep painting plots while the view slides under it.
-      cancelStroke();
-      return;
-    }
 
     ndcFrom(event);
     event.preventDefault();
     renderer.domElement.setPointerCapture(event.pointerId);
-    holding = true;
-    holdingTouch = event.pointerType === 'touch' || event.pointerType === 'pen';
+
+    // A second finger joining a live press hands the gesture to the camera
+    // (two-finger pan, zoom and twist); an active sweep is abandoned so a
+    // pinch cannot keep painting plots while the view slides under it.
+    if (!event.isPrimary) {
+      cancelStroke();
+      return;
+    }
+
+    const point = { x: ndc.x, y: ndc.y };
+    const hit = pickAt({ x: ndc.x, y: ndc.y });
+
+    if (!hit) {
+      panPress = { pointerId: event.pointerId, start: point, moved: false };
+      return;
+    }
 
     // The stroke uses its own wear budget, cloned from what the plushie has
     // right now, so a can that dies mid-sweep stalls the sweep instead of
     // letting one lucky drag water fifty plots on a single charge. What was
     // spent is written back to the real tools only when the gesture ends.
+    holding = true;
+    holdingTouch = event.pointerType === 'touch' || event.pointerType === 'pen';
     stroke = {
       pointerId: event.pointerId,
       tool,
       tools: { hoe: tools.hoe, can: tools.can },
-      start: { x: ndc.x, y: ndc.y },
+      start: point,
       touched: new Set(),
       moved: false,
       didWork: false,
@@ -534,6 +552,18 @@ export function createFarmWorld({
   }
 
   function onMove(event) {
+    if (panPress && panPress.pointerId === event.pointerId) {
+      ndcFrom(event);
+      const dx = ndc.x - panPress.start.x;
+      const dy = ndc.y - panPress.start.y;
+      // Silently cross the drag threshold: the press stops being a tap and the
+      // camera (which reads `panGesture` on the very same event) takes it as a
+      // pan. The walk is only ever released on a press that never moved.
+      if (!panPress.moved && dx * dx + dy * dy >= DRAG_START * DRAG_START) {
+        panPress.moved = true;
+      }
+      return;
+    }
     if (!stroke || event.pointerId !== stroke.pointerId) return;
     ndcFrom(event);
     const dx = ndc.x - stroke.start.x;
@@ -561,6 +591,18 @@ export function createFarmWorld({
   }
 
   function onRelease(event) {
+    if (panPress && panPress.pointerId === event.pointerId) {
+      const press = panPress;
+      panPress = null;
+      if (renderer.domElement.hasPointerCapture(event.pointerId)) {
+        renderer.domElement.releasePointerCapture(event.pointerId);
+      }
+      // A press on open ground that never dragged is a walk: head to the spot.
+      if (!press.moved) {
+        tapTo({ start: press.start, tool, tools });
+      }
+      return;
+    }
     if (!stroke || event.pointerId !== stroke.pointerId) return;
     if (renderer.domElement.hasPointerCapture(event.pointerId)) {
       renderer.domElement.releasePointerCapture(event.pointerId);
@@ -1075,7 +1117,7 @@ export function createFarmWorld({
     } else if (tool === 'fence' && (counts.fence || 0) <= 0) {
       hint = REASONS['no-fence'];
     } else {
-      hint = 'Tap to walk · two fingers to pan · drag to paint';
+      hint = 'Tap to walk · drag a plot to work · drag open ground to pan';
     }
 
     hud.paint({
@@ -1164,10 +1206,10 @@ export function createFarmWorld({
       overhead: {
         yaw: 0,        // the arch ends up at the screen's edge
         pitch: THREE.MathUtils.degToRad(63),
-        // Framed in on the field so plots read ~1.6x larger than the old 15 and
-        // stay easy to tap on a phone; a two-finger pan or a pinch moves the
-        // frame around for anything that falls off screen.
-        distance: 9.5,
+        // Framed in on the field so plots read large and stay easy to tap on a
+        // phone; a two-finger pan, or dragging open ground, moves the frame
+        // around for anything that falls off screen.
+        distance: 12.5,
         center: [0, 0],
       },
     },
@@ -1176,6 +1218,7 @@ export function createFarmWorld({
     furniture,
     stick,
     get holding() { return holdingTouch; },
+    get panGesture() { return panPress !== null; },
     enter() {
       entered = true;
       player.group.position.copy(player.position);
