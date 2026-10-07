@@ -568,6 +568,7 @@ function makePromptIcon(direction) {
   ctx.stroke();
 
   ctx.beginPath();
+  let custom = false;
   if (direction === 'up') {
     ctx.moveTo(cx - 22, cy + 12);
     ctx.lineTo(cx, cy - 12);
@@ -582,7 +583,9 @@ function makePromptIcon(direction) {
     ctx.lineTo(cx + 2, cy + 13);
   } else if (direction === 'shop') {
     // Trading: a handled bag, for the market stall. A bag marks "buy and sell"
-    // better than a coin, which reads as a number.
+    // better than a coin, which reads as a number. Stroked on its own, so the
+    // shared marker stroke below is skipped.
+    custom = true;
     ctx.strokeRect(cx - 17, cy - 8, 34, 20);
     ctx.beginPath();
     ctx.moveTo(cx - 10, cy - 8);
@@ -598,17 +601,18 @@ function makePromptIcon(direction) {
     ctx.lineWidth = 8;
     ctx.strokeStyle = 'rgba(201, 165, 95, 0.95)';
     ctx.stroke();
-    return;
   } else {
     ctx.moveTo(cx - 22, cy - 12);
     ctx.lineTo(cx, cy + 12);
     ctx.lineTo(cx + 22, cy - 12);
   }
-  ctx.strokeStyle = '#3a2a18';
-  ctx.lineWidth = 11;
-  ctx.lineCap = 'round';
-  ctx.lineJoin = 'round';
-  ctx.stroke();
+  if (!custom) {
+    ctx.strokeStyle = '#3a2a18';
+    ctx.lineWidth = 11;
+    ctx.lineCap = 'round';
+    ctx.lineJoin = 'round';
+    ctx.stroke();
+  }
 
   const texture = new THREE.CanvasTexture(canvas);
   texture.colorSpace = THREE.SRGBColorSpace;
