@@ -66,11 +66,12 @@ export class Joystick {
   }
 
   _centre() {
+    if (!this._centreRect) if(!this._centreRect)this._centreRect=this.root.getBoundingClientRect();
     const rect = this.root.getBoundingClientRect();
-    return {
-      x: rect.left + rect.width / 2,
-      y: rect.top + rect.height / 2,
-    };
+    if (!this._centrePoint) this._centrePoint = { x: 0, y: 0 };
+    this._centrePoint.x = rect.left + rect.width / 2;
+    this._centrePoint.y = rect.top + rect.height / 2;
+    return this._centrePoint;
   }
 
   _onStart(event) {

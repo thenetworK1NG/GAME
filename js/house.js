@@ -213,14 +213,14 @@ export function buildHouse(scene) {
     color: 0xf0ebe2,
     roughness: 0.9,
     metalness: 0,
-    transparent: true,
+    transparent: false,
     opacity: 1,
   });
   const trimMat = new THREE.MeshStandardMaterial({
     color: 0xffffff,
     roughness: 0.6,
     metalness: 0,
-    transparent: true,
+    transparent: false,
     opacity: 1,
   });
 

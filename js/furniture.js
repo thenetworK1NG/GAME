@@ -226,9 +226,13 @@ function requestArtTexture() {
     ART_URL,
     (tex) => {
       tex.colorSpace = THREE.SRGBColorSpace;
-      tex.anisotropy = 4;
       artTexture = tex;
-      for (const m of artSurfaces) { m.map = tex; m.needsUpdate = true; }
+      artRequested = false;
+      for (const m of artSurfaces) {
+        m.map = tex;
+        m.color.set(0xffffff);
+        m.needsUpdate = true;
+      }
     },
     undefined,
     () => { artRequested = false; }
@@ -1164,13 +1168,13 @@ export class FurnitureSystem {
     if (this.refusing > 0) {
       this.refusing -= dt;
       if (this.refusing <= 0) {
-this.refusing = 0;
-    // Optional callback, set by the game shell: onEvent('pickup'|'place', inst).
-    // Lets sound react to successful interactions without this module needing to
-    // know anything about audio. Left null here so the tests can run without it.
-    this.onEvent = null;
+        this.refusing = 0;
         this.outline.group.visible = true;
-} else if (carried) {
+        // Optional callback, set by the game shell: onEvent('pickup'|'place', inst).
+        // Lets sound react to successful interactions without this module needing to
+        // know anything about audio. Left null here so the tests can run without it.
+        this.onEvent = null;
+      } else if (carried) {
         // Leave the panel where it is; just repaint it amber and blink. Redoing
         // the geometry here would put a hung picture's outline on the floor.
         if (this.outline.mode === 'wall') {

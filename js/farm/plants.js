@@ -242,15 +242,21 @@ export function createPlants(plots, camera) {
       bar.quaternion.copy(camera.quaternion);
 
       const g = Math.max(0, Math.min(1, target.growth));
-      barFill.scale.x = Math.max(0.0001, g);
-      barFill.position.x = -(BAR_W * (1 - g)) / 2;
+      const gScale = g <= 0 ? 0.0001 : g;
+      if (barFill.scale.x !== gScale) {
+        barFill.scale.x = gScale;
+        barFill.position.x = -(BAR_W * (1 - g)) / 2;
+      }
       // Blue while hydrated, cream once it starts to dry: the colour is the
       // water state.
-      barFillMat.color.setHex(target.hydrated ? 0x8fd0ff : 0xf2e2b0);
-      barFill.visible = g > 0;
+      const fillCol = target.hydrated ? 0x8fd0ff : 0xf2e2b0;
+      if (barFillMat.color.getHex() !== fillCol) barFillMat.color.setHex(fillCol);
+      const bv = g > 0;
+      if (barFill.visible !== bv) barFill.visible = bv;
 
-      node.dirtMat.color.setHex(colourFor(target));
-      node.ridgeMat.color.setHex(colourFor(target));
+      const c = colourFor(target);
+      if (node.dirtMat.color.getHex() !== c) node.dirtMat.color.setHex(c);
+      if (node.ridgeMat.color.getHex() !== c) node.ridgeMat.color.setHex(c);
     },
   };
 }
