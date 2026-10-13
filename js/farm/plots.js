@@ -52,7 +52,7 @@ export function createField() {
       plots.push({
         key: i + j * PLOT_COUNT, i, j,
         tilled: false, hydrated: false, dry: 0,
-        crop: null, growth: 0,
+        crop: null, growth: 0, harvests: 0,
       });
     }
   }
@@ -87,6 +87,7 @@ export function restoreField(saved, elapsed = 0) {
     if (plot.crop) {
       plot.growth = catchUp(plot.growth, plot.hydrated, elapsed, CROPS[plot.crop].grow);
     } else {
+      plot.harvests = Number.isFinite(src.hv) ? Math.max(0, src.hv) : 0;
       plot.growth = 0;
       plot.dry = 0;
     }
@@ -102,6 +103,7 @@ export function serialiseField(plots) {
     d: p.dry,
     c: p.crop,
     g: p.growth,
+    hv: Number.isFinite(p.harvests) ? p.harvests : 0,
   }));
 }
 
@@ -199,9 +201,20 @@ export function useTool(plot, tool, inventory, tools = {}) {
   if (tool === 'hand') {
     const cropDef = CROPS[plot.crop];
     for (const [kind, n] of Object.entries(cropDef.yield)) inventory.give(kind, n);
-    plot.crop = null;
-    plot.growth = 0;
-    plot.dry = 0;
+    const h = (Number.isFinite(plot.harvests) ? plot.harvests : 0) + 1;
+    plot.harvests = h;
+    if (h >= 3) {
+      plot.crop = null;
+      plot.growth = 0;
+      plot.dry = 0;
+      plot.tilled = false;
+      plot.hydrated = false;
+      plot.harvests = 0;
+    } else {
+      plot.crop = null;
+      plot.growth = 0;
+      plot.dry = 0;
+    }
     return verdict;
   }
 
