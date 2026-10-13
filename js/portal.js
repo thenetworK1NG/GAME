@@ -225,15 +225,15 @@ export function createPortal({ onTravel, onPause }) {
     // Opaque before the swap, and the fade itself swallows taps so a second
     // press cannot fire a second trip.
     fade.classList.add('active');
-    await wait(FADE_MS);
-
-    onTravel(id);
-
-    fade.classList.remove('active');
-    await wait(FADE_MS);
-
-    onPause(false);
-    travelling = false;
+    try {
+      await wait(FADE_MS);
+      onTravel(id);
+      fade.classList.remove('active');
+      await wait(FADE_MS);
+    } finally {
+      onPause(false);
+      travelling = false;
+    }
   }
 
   closeBtn.addEventListener('click', close);
